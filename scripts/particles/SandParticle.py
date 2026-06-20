@@ -1,7 +1,7 @@
 """
 Sand particle — falls down, slides on diagonals, supports sleep/wake mechanics.
 
-Behaviour is driven by the particle's *wetness* level (0-3):
+Behaviour is driven by the particle's *wetness* level (float → int floor):
 
   Level | Fall  | Diagonal | Sleep threshold | Max sleep | Re-sleep delay
   ------|-------|----------|-----------------|-----------|---------------
@@ -11,10 +11,10 @@ Behaviour is driven by the particle's *wetness* level (0-3):
   3     | always |   0%    | ≥1 neighbour    | infinite  | 6 s
 """
 
-from scripts.Grid import Grid, HEIGHT
+from scripts.Grid import Grid
 
 # ── wetness-level tables ──────────────────────────────────────
-# Indexed by wetness value (0-3)
+# Indexed by int wetness level (0-3)
 DIAGONAL_CHANCE   = [1.0, 0.6, 0.2, 0.0]
 SUPPORT_THRESHOLD = [999,   4,   2,   1]
 MAX_SLEEP_FRAMES  = [0, 1800, 9000, 2_000_000_000]  # 30s / 150s / ∞
@@ -23,8 +23,9 @@ RESLEEP_DELAY     = [0,   90,  180,  360]             # 1.5s / 3s / 6s
 
 def update(grid: Grid, x: int, y: int) -> None:
     """One simulation step for a sand particle at (x, y)."""
-    wet = grid.wetness[y][x]
-    wet = min(wet, 3)  # clamp
+    wet = grid.wetness[y][x]          # float
+    level = min(int(wet), 3)          # 0-3 for table lookups
+    h = grid.height
 
     # ── SLEEP CHECK ─────────────────────────────────────────
     if grid.asleep[y][x]:
@@ -32,9 +33,9 @@ def update(grid: Grid, x: int, y: int) -> None:
         wake = False
         if grid.disturbed[y][x] == grid.frame:
             wake = True                         # disturbance above
-        elif support < SUPPORT_THRESHOLD[wet]:
+        elif support < SUPPORT_THRESHOLD[level]:
             wake = True                         # lost support
-        elif wet < 3 and (grid.frame - grid.wake_frame[y][x]) > MAX_SLEEP_FRAMES[wet]:
+        elif level < 3 and (grid.frame - grid.wake_frame[y][x]) > MAX_SLEEP_FRAMES[level]:
             wake = True                         # timer expired
 
         if not wake:
@@ -48,16 +49,16 @@ def update(grid: Grid, x: int, y: int) -> None:
     # ── MOVEMENT ────────────────────────────────────────────
 
     # 1 — fall straight down (always try, regardless of wetness)
-    if y + 1 < HEIGHT and grid.can_occupy(x, y + 1, 1):
+    if y + 1 < h and grid.can_occupy(x, y + 1, 1):
         grid.swap(x, y, x, y + 1)
         return
 
-    # 2 — diagonal slides (chance decreases with wetness)
-    if grid.rng.random() < DIAGONAL_CHANCE[wet]:
+    # 2 — diagonal slides (chance decreases with wetness level)
+    if grid.rng.random() < DIAGONAL_CHANCE[level]:
         left = x - 1
         right = x + 1
-        can_left  = x > 0 and y + 1 < HEIGHT and grid.can_occupy(left, y + 1, 1)
-        can_right = right < grid.width and y + 1 < HEIGHT and grid.can_occupy(right, y + 1, 1)
+        can_left  = x > 0 and y + 1 < h and grid.can_occupy(left, y + 1, 1)
+        can_right = right < grid.width and y + 1 < h and grid.can_occupy(right, y + 1, 1)
 
         if can_left or can_right:
             prefer_left = grid.rng.random() < 0.5
@@ -74,9 +75,9 @@ def update(grid: Grid, x: int, y: int) -> None:
             return
 
     # ── COULDN'T MOVE → try to sleep ──────────────────────
-    if wet >= 1:
+    if level >= 1:
         support = grid.support_count(x, y)
-        if support >= SUPPORT_THRESHOLD[wet]:
+        if support >= SUPPORT_THRESHOLD[level]:
             frames_awake = grid.frame - grid.wake_frame[y][x]
-            if frames_awake >= RESLEEP_DELAY[wet]:
+            if frames_awake >= RESLEEP_DELAY[level]:
                 grid.asleep[y][x] = 1

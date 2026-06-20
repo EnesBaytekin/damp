@@ -19,10 +19,10 @@ class Grid:
     __slots__ = (
         "grid", "updated", "frame", "rng", "particle_types",
         "dirty", "width", "height",
-        "wetness",       # [y][x] → 0-3 (SAND only)
+        "wetness",       # [y][x] → float 0.0-3.0+ (SAND only)
         "asleep",        # [y][x] → bool (SAND only)
         "wake_frame",    # [y][x] → frame# of last wake (SAND only)
-        "water_charge",  # [y][x] → 0-4 (WATER only, spawn=4)
+        "water_charge",  # [y][x] → 0-6 (WATER only, spawn=6)
         "disturbed",     # [y][x] → frame# when last disturbed
     )
 
@@ -37,7 +37,7 @@ class Grid:
         self.dirty: list[tuple[int, int]] = []
 
         # Per-particle state arrays
-        self.wetness      = [[0] * width for _ in range(height)]
+        self.wetness      = [[0.0] * width for _ in range(height)]
         self.asleep       = [[0] * width for _ in range(height)]
         self.wake_frame   = [[0] * width for _ in range(height)]
         self.water_charge = [[0] * width for _ in range(height)]
@@ -59,10 +59,10 @@ class Grid:
             return False
 
         self.grid[y][x] = type_id
-        self.wetness[y][x] = 0
+        self.wetness[y][x] = 0.0
         self.asleep[y][x] = 0
         self.wake_frame[y][x] = 0
-        self.water_charge[y][x] = 4 if type_id == 2 else 0
+        self.water_charge[y][x] = 6 if type_id == 2 else 0
         self.dirty.append((x, y))
         return True
 
@@ -120,50 +120,48 @@ class Grid:
     # ── Drying ────────────────────────────────────────────────
 
     def _drying_step(self) -> None:
-        """Desynchronised drying — each particle rolls its own chance.
+        """Desynchronised float drying — very slow.
 
-        Higher wetness dries more slowly (more stable), lower wetness
-        dries faster.  Expected level lifetime at 60 fps:
-          wetness 3 → 2:  ~60 s  (1/3600 per frame)
-          wetness 2 → 1:  ~30 s  (1/1800)
-          wetness 1 → 0:  ~15 s  (1/900)
-          full 3 → 0:     ~105 s
+        Each tick removes 0.25 wetness.  Expected lifetime at 60 fps:
+          wetness 3.0 → 0:  ~40 dk  (1/12000 per frame, 12 ticks × 200 s)
         """
-        DRY_CHANCE = [0, 1/900, 1/1800, 1/3600]
+        DRY_RATE = 1/12000
         for y in range(self.height):
             for x in range(self.width):
                 if self.grid[y][x] != 1:
                     continue
                 w = self.wetness[y][x]
-                if w <= 0:
+                if w <= 0.0:
                     continue
-                if self.rng.random() < DRY_CHANCE[w]:
-                    self.wetness[y][x] -= 1
+                if self.rng.random() < DRY_RATE:
+                    self.wetness[y][x] = max(0.0, w - 0.25)
                     self.dirty.append((x, y))
-                    if w == 1 and self.asleep[y][x]:
+                    if w - 0.25 <= 0.0 and self.asleep[y][x]:
                         self.asleep[y][x] = 0
                         self.wake_frame[y][x] = self.frame
 
     # ── Wetness diffusion ─────────────────────────────────────
 
     def _diffusion_step(self) -> None:
-        """Desynchronised slow wetness transfer.
+        """Float wetness diffusion — chance scales with source wetness.
 
-        Each particle has a ~1.7% chance per frame to attempt diffusion
-        (natural desync — no global timer).  Only transfers when
-        wetness *difference >= 2*, so 3→3, 3→2, and 1→0 never happen.
+        Transfer (0.5) only if:  source - 0.5 > target + 0.5
+        i.e. source - target >= 1.0, so the source stays strictly wetter
+        (no oscillation).  Per-frame chance is proportional to source
+        wetness (w * 0.1).  All directions equal — no bias.
         """
         for y in range(self.height):
             for x in range(self.width):
                 if self.grid[y][x] != 1:
                     continue
                 w = self.wetness[y][x]
-                if w < 2:          # at least 2 needed to donate
+                if w <= 0.5:
                     continue
-                if self.rng.random() > 1/60:   # ~1.7% this frame
+                # Roll proportional to wetness — w=1→10%, w=2→20%, w=3→30%
+                if self.rng.random() > w * 0.1:
                     continue
 
-                # Collect neighbours that are at least 2 levels drier
+                # Gather neighbours that we can donate to while staying wetter
                 candidates = []
                 for dy in (-1, 0, 1):
                     for dx in (-1, 0, 1):
@@ -171,15 +169,27 @@ class Grid:
                             continue
                         nx, ny = x + dx, y + dy
                         if 0 <= nx < self.width and 0 <= ny < self.height:
-                            if self.grid[ny][nx] == 1 and w - self.wetness[ny][nx] >= 2:
-                                candidates.append((nx, ny))
+                            nw = self.wetness[ny][nx]
+                            if self.grid[ny][nx] == 1 and w - nw >= 1.0:
+                                candidates.append((nx, ny, dy))
                 if not candidates:
                     continue
-                tx, ty = self.rng.choice(candidates)
-                self.wetness[y][x] -= 1
-                self.wetness[ty][tx] += 1
-                self.dirty.append((x, y))
-                self.dirty.append((tx, ty))
+
+                # All directions equal weight
+                total = 0
+                weights = []
+                for nx, ny, _ in candidates:
+                    total += 1
+                    weights.append((nx, ny, 1))
+                pick = self.rng.randint(0, total - 1)
+                for nx, ny, wt in weights:
+                    if pick < wt:
+                        self.wetness[y][x] -= 0.5
+                        self.wetness[ny][nx] += 0.5
+                        self.dirty.append((x, y))
+                        self.dirty.append((nx, ny))
+                        break
+                    pick -= wt
 
     # ── Simulation step ──────────────────────────────────────
 

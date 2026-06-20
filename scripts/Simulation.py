@@ -110,7 +110,7 @@ class Simulation:
         initial_wet = 0
         if t == 3:
             t = 1
-            initial_wet = 3      # pre-wetted sand
+            initial_wet = 3.0      # pre-wetted sand
 
         for _ in range(self.spawn_rate):
             dx = self.grid.rng.randint(-r, r)
@@ -181,7 +181,8 @@ class Simulation:
                 self.sim_surf.set_at((x, y), BG_COLOR)
             elif tid == 1:
                 # Sand — colour depends on wetness
-                w = min(self.grid.wetness[y][x], 3)
+                raw = self.grid.wetness[y][x]
+                w = 0 if raw <= 0.0 else min(int(raw + 0.99), 3)
                 self.sim_surf.set_at((x, y), SAND_COLORS[w])
             else:
                 info = self.grid.particle_types.get(tid)
