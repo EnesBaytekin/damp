@@ -68,9 +68,10 @@ class Grid:
 
     def swap(self, x1: int, y1: int, x2: int, y2: int) -> None:
         """Swap two cells — all state fields follow the particle."""
-        # Types
+        t1 = self.grid[y1][x1]
+        t2 = self.grid[y2][x2]
+
         self.grid[y1][x1], self.grid[y2][x2] = self.grid[y2][x2], self.grid[y1][x1]
-        # Extra fields (swap so they stay with the moving particle)
         self.wetness[y1][x1], self.wetness[y2][x2] = self.wetness[y2][x2], self.wetness[y1][x1]
         self.asleep[y1][x1], self.asleep[y2][x2] = self.asleep[y2][x2], self.asleep[y1][x1]
         self.wake_frame[y1][x1], self.wake_frame[y2][x2] = self.wake_frame[y2][x2], self.wake_frame[y1][x1]
@@ -81,11 +82,14 @@ class Grid:
         self.dirty.append((x1, y1))
         self.dirty.append((x2, y2))
 
-        # Mark cells above as disturbed (avalanche / wake-up propagation)
-        if y1 > 0:
-            self.disturbed[y1 - 1][x1] = self.frame
-        if y2 > 0:
-            self.disturbed[y2 - 1][x2] = self.frame
+        # Only disturb when sand (type 1) is involved — water flowing past
+        # shouldn't wake sleeping sand above it.
+        has_sand = (t1 == 1) or (t2 == 1)
+        if has_sand:
+            if y1 > 0:
+                self.disturbed[y1 - 1][x1] = self.frame
+            if y2 > 0:
+                self.disturbed[y2 - 1][x2] = self.frame
 
     # ── Per-type helpers used by particle update functions ─────
 
