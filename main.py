@@ -1,5 +1,5 @@
 """
-Sandcastle Builder — falling-sand / pixel-simulation sandbox game.
+Damp — falling-sand / pixel-simulation sandbox game.
 Built on pygaminal (JSON scene + component framework on top of pygame).
 """
 
