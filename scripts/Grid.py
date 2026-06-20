@@ -1,9 +1,9 @@
 """
 Grid — the core simulation data structure.
 
-Manages a 2D grid of particle types (320x180), tracks per-frame updates
-via a frame-counter marking system (avoids resetting a full boolean array),
-and maintains a dirty-rect list for efficient rendering.
+Manages a 2D grid of particle types (160x90), per-particle state fields
+(wetness, asleep, water_charge), a frame-counter marking system for
+double-processing prevention, and a dirty-rect list for efficient rendering.
 """
 
 import random
@@ -19,21 +19,29 @@ class Grid:
     __slots__ = (
         "grid", "updated", "frame", "rng", "particle_types",
         "dirty", "width", "height",
+        "wetness",       # [y][x] → 0-3 (SAND only)
+        "asleep",        # [y][x] → bool (SAND only)
+        "wake_frame",    # [y][x] → frame# of last wake (SAND only)
+        "water_charge",  # [y][x] → 0-4 (WATER only, spawn=4)
+        "disturbed",     # [y][x] → frame# when last disturbed
     )
 
     def __init__(self, width: int = WIDTH, height: int = HEIGHT):
         self.width = width
         self.height = height
-        # grid[y][x] = particle type ID (0 = EMPTY)
         self.grid = [[EMPTY] * width for _ in range(height)]
-        # Frame-number marker: updated[y][x] == self.frame means "already processed"
         self.updated = [[0] * width for _ in range(height)]
         self.frame = 0
         self.rng = random.Random()
-        # Particle type registry: {type_id: {"name": str, "color": tuple, "density": int, "update": callable}}
         self.particle_types: dict[int, dict] = {}
-        # Cells that changed this frame — list of (x, y)
         self.dirty: list[tuple[int, int]] = []
+
+        # Per-particle state arrays
+        self.wetness      = [[0] * width for _ in range(height)]
+        self.asleep       = [[0] * width for _ in range(height)]
+        self.wake_frame   = [[0] * width for _ in range(height)]
+        self.water_charge = [[0] * width for _ in range(height)]
+        self.disturbed    = [[0] * width for _ in range(height)]
 
     # ── Registry ──────────────────────────────────────────────
 
@@ -44,22 +52,40 @@ class Grid:
     # ── Mutation helpers ──────────────────────────────────────
 
     def spawn(self, x: int, y: int, type_id: int) -> bool:
-        """Place a single particle at (x, y). Returns False if occupied or out of bounds."""
+        """Place a single particle at (x, y). Returns False if occupied or OOB."""
         if not (0 <= x < self.width and 0 <= y < self.height):
             return False
         if self.grid[y][x] != EMPTY:
             return False
+
         self.grid[y][x] = type_id
+        self.wetness[y][x] = 0
+        self.asleep[y][x] = 0
+        self.wake_frame[y][x] = 0
+        self.water_charge[y][x] = 4 if type_id == 2 else 0
         self.dirty.append((x, y))
         return True
 
     def swap(self, x1: int, y1: int, x2: int, y2: int) -> None:
-        """Swap two cells (handles displacement)."""
+        """Swap two cells — all state fields follow the particle."""
+        # Types
         self.grid[y1][x1], self.grid[y2][x2] = self.grid[y2][x2], self.grid[y1][x1]
+        # Extra fields (swap so they stay with the moving particle)
+        self.wetness[y1][x1], self.wetness[y2][x2] = self.wetness[y2][x2], self.wetness[y1][x1]
+        self.asleep[y1][x1], self.asleep[y2][x2] = self.asleep[y2][x2], self.asleep[y1][x1]
+        self.wake_frame[y1][x1], self.wake_frame[y2][x2] = self.wake_frame[y2][x2], self.wake_frame[y1][x1]
+        self.water_charge[y1][x1], self.water_charge[y2][x2] = self.water_charge[y2][x2], self.water_charge[y1][x1]
+
         self.updated[y1][x1] = self.frame
         self.updated[y2][x2] = self.frame
         self.dirty.append((x1, y1))
         self.dirty.append((x2, y2))
+
+        # Mark cells above as disturbed (avalanche / wake-up propagation)
+        if y1 > 0:
+            self.disturbed[y1 - 1][x1] = self.frame
+        if y2 > 0:
+            self.disturbed[y2 - 1][x2] = self.frame
 
     # ── Per-type helpers used by particle update functions ─────
 
@@ -76,6 +102,38 @@ class Grid:
             return mover["density"] > target_t["density"]
         return False
 
+    # ── Support query (used by particle scripts) ──────────────
+
+    def support_count(self, x: int, y: int) -> int:
+        """Count non-empty cells in the 8-way Moore neighbourhood."""
+        count = 0
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < self.width and 0 <= ny < self.height:
+                    if self.grid[ny][nx] != EMPTY:
+                        count += 1
+        return count
+
+    # ── Drying ────────────────────────────────────────────────
+
+    def _drying_step(self) -> None:
+        """Decrease wetness of all SAND particles every ~300 frames."""
+        if self.frame % 300 != 0:
+            return
+        for y in range(self.height):
+            for x in range(self.width):
+                if self.grid[y][x] != 1:
+                    continue
+                if self.wetness[y][x] > 0:
+                    self.wetness[y][x] -= 1
+                    self.dirty.append((x, y))
+                    if self.wetness[y][x] == 0 and self.asleep[y][x]:
+                        self.asleep[y][x] = 0
+                        self.wake_frame[y][x] = self.frame
+
     # ── Simulation step ──────────────────────────────────────
 
     def step(self) -> None:
@@ -83,11 +141,10 @@ class Grid:
         self.frame += 1
 
         for y in range(self.height - 1, -1, -1):
-            # Alternate scan direction every frame to avoid bias
             if self.frame & 1:
-                x_range = range(self.width - 1, -1, -1)   # right → left
+                x_range = range(self.width - 1, -1, -1)
             else:
-                x_range = range(self.width)                # left → right
+                x_range = range(self.width)
 
             for x in x_range:
                 type_id = self.grid[y][x]
@@ -98,3 +155,5 @@ class Grid:
                     self.updated[y][x] = self.frame
                 else:
                     fn(self, x, y)
+
+        self._drying_step()

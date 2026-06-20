@@ -5,7 +5,7 @@ Owns the Grid, loads particle type definitions from .obj files,
 handles mouse / keyboard input, runs the simulation step, and
 renders the result to Screen() every frame.
 
-The scene logical resolution is 320×180 — pygaminal's SCALED flag
+Scene logical resolution is 160×90 — pygaminal's SCALED flag
 handles scaling to the actual display.
 """
 
@@ -24,25 +24,32 @@ from scripts.Grid import Grid, WIDTH, HEIGHT, EMPTY
 # ── colour palette ──────────────────────────────────────────
 BG_COLOR = (0x1a, 0x1a, 0x2e)       # dark navy (empty cells)
 
+# Sand colour per wetness level (0 → 3)
+SAND_COLORS = [
+    (194, 178, 128),   # 0 dry
+    (170, 150, 100),   # 1 damp
+    (140, 120,  80),   # 2 wet
+    (100,  80,  50),   # 3 soggy
+]
+
 
 class Simulation:
     """Main simulation controller — one instance, attached to the scene object."""
 
     def __init__(self):
         self.grid = Grid()
-        # Private surface at sim resolution (320×180)
         self.sim_surf = pygame.Surface((WIDTH, HEIGHT))
         self._load_particle_types()
 
         # Brush state
-        self.current_type = 1          # default: sand
+        self.current_type = 1          # 1=sand, 2=water, 3=wet sand
         self.brush_radius = 3
-        self.spawn_rate = 8            # particles per frame while painting
+        self.spawn_rate = 8
 
-        # Key state
+        # Eraser state
+        self.eraser_active = False
+
         self._show_debug = False
-
-        # Pre-fill sim surface
         self.sim_surf.fill(BG_COLOR)
 
     # ── particle-type registry from .obj files ───────────────
@@ -68,7 +75,6 @@ class Simulation:
             if not type_id:
                 continue
 
-            # Import the particle update function
             update_fn = None
             script_ref = data.get("script")
             if script_ref:
@@ -87,38 +93,75 @@ class Simulation:
             })
             print(f"[Simulation] registered particle type {type_id}: {data.get('name')}")
 
+    # ── helpers ────────────────────────────────────────────
+
+    def _get_brush_pos(self) -> tuple[int, int]:
+        """Return the sim-grid coordinates under the mouse cursor, clamped."""
+        mx, my = InputManager().get_mouse_position()
+        return (
+            max(0, min(WIDTH - 1, mx)),
+            max(0, min(HEIGHT - 1, my)),
+        )
+
+    def _paint(self, gx: int, gy: int, r: int) -> None:
+        """Spawn particles in a circle of radius *r* centred on (gx, gy)."""
+        t = self.current_type
+        # Determine initial wetness for sand brush
+        initial_wet = 0
+        if t == 3:
+            t = 1
+            initial_wet = 3      # pre-wetted sand
+
+        for _ in range(self.spawn_rate):
+            dx = self.grid.rng.randint(-r, r)
+            dy = self.grid.rng.randint(-r, r)
+            if dx * dx + dy * dy <= r * r:
+                if self.grid.spawn(gx + dx, gy + dy, t):
+                    if initial_wet:
+                        self.grid.wetness[gy + dy][gx + dx] = initial_wet
+
+    def _erase(self, gx: int, gy: int, r: int) -> None:
+        """Remove any particles within the brush circle."""
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx * dx + dy * dy <= r * r:
+                    nx, ny = gx + dx, gy + dy
+                    if 0 <= nx < WIDTH and 0 <= ny < HEIGHT:
+                        if self.grid.grid[ny][nx] != EMPTY:
+                            self.grid.grid[ny][nx] = EMPTY
+                            self.grid.dirty.append((nx, ny))
+
     # ── input ──────────────────────────────────────────────
 
     def _handle_input(self) -> None:
         im = InputManager()
 
-        # Switch particle type with number keys
+        # Switch brush type
         if pygame.K_1 in im.just_pressed_keys:
-            self.current_type = 1
+            self.current_type = 1          # dry sand
         elif pygame.K_2 in im.just_pressed_keys:
-            self.current_type = 2
+            self.current_type = 2          # water
+        elif pygame.K_3 in im.just_pressed_keys:
+            self.current_type = 3          # wet sand (pre-wetted)
         elif pygame.K_d in im.just_pressed_keys:
             self._show_debug = not self._show_debug
 
-        # Brush radius with [ and ]
+        # Brush radius
         if pygame.K_LEFTBRACKET in im.just_pressed_keys:
             self.brush_radius = max(1, self.brush_radius - 1)
         elif pygame.K_RIGHTBRACKET in im.just_pressed_keys:
             self.brush_radius = min(10, self.brush_radius + 1)
 
-        # Paint with left mouse button
-        # (mouse coords are already in 320×180 logical space thanks to SCALED)
-        if im.is_mouse_pressed(1):
-            gx, gy = im.get_mouse_position()
-            gx = max(0, min(WIDTH - 1, gx))
-            gy = max(0, min(HEIGHT - 1, gy))
+        gx, gy = self._get_brush_pos()
+        r = self.brush_radius
 
-            r = self.brush_radius
-            for _ in range(self.spawn_rate):
-                dx = self.grid.rng.randint(-r, r)
-                dy = self.grid.rng.randint(-r, r)
-                if dx * dx + dy * dy <= r * r:
-                    self.grid.spawn(gx + dx, gy + dy, self.current_type)
+        # Left mouse → paint
+        if im.is_mouse_pressed(1):
+            self._paint(gx, gy, r)
+
+        # Right mouse → erase
+        if im.is_mouse_pressed(3):
+            self._erase(gx, gy, r)
 
     # ── per-frame update / render ──────────────────────────
 
@@ -129,20 +172,24 @@ class Simulation:
         self._render()
 
     def _render(self) -> None:
-        """Redraw only dirty cells onto our 320×180 surface."""
+        """Redraw only dirty cells onto our 160×90 surface."""
         for (x, y) in self.grid.dirty:
             if not (0 <= x < WIDTH and 0 <= y < HEIGHT):
                 continue
             tid = self.grid.grid[y][x]
             if tid == EMPTY:
                 self.sim_surf.set_at((x, y), BG_COLOR)
+            elif tid == 1:
+                # Sand — colour depends on wetness
+                w = min(self.grid.wetness[y][x], 3)
+                self.sim_surf.set_at((x, y), SAND_COLORS[w])
             else:
                 info = self.grid.particle_types.get(tid)
                 self.sim_surf.set_at((x, y), info["color"] if info else (255, 255, 255))
         self.grid.dirty.clear()
 
     def draw(self, obj) -> None:
-        """Blit sim surface → Screen surface (both 320×180). SCALED handles display scaling."""
+        """Blit sim surface → Screen surface (both 160×90). SCALED handles display."""
         Screen().surface.blit(self.sim_surf, (0, 0))
 
         if self._show_debug:
@@ -152,11 +199,12 @@ class Simulation:
         """Simple stats overlay."""
         font = pygame.font.SysFont("monospace", 10)
         total = sum(1 for row in self.grid.grid for c in row if c != EMPTY)
-        type_name = {1: "sand", 2: "water"}.get(self.current_type, "?")
+        asleep = sum(row.count(1) for row in self.grid.asleep)
+        type_names = {1: "sand", 2: "water", 3: "wet_sand"}
         lines = [
             f"frame {self.grid.frame}",
-            f"particles {total}",
-            f"brush: {type_name} r={self.brush_radius}",
+            f"particles {total}  asleep {asleep}",
+            f"brush: {type_names.get(self.current_type, '?')} r={self.brush_radius}",
             f"fps: {App().clock.get_fps():.0f}",
         ]
         for i, line in enumerate(lines):
