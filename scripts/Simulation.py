@@ -131,6 +131,18 @@ class Simulation:
                             self.grid.grid[ny][nx] = EMPTY
                             self.grid.dirty.append((nx, ny))
 
+    def _water_erase(self, gx: int, gy: int, r: int) -> None:
+        """Remove only water particles within the brush circle — sand stays."""
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx * dx + dy * dy <= r * r:
+                    nx, ny = gx + dx, gy + dy
+                    if 0 <= nx < WIDTH and 0 <= ny < HEIGHT:
+                        if self.grid.grid[ny][nx] == 2:
+                            self.grid.grid[ny][nx] = EMPTY
+                            self.grid.water_charge[ny][nx] = 0
+                            self.grid.dirty.append((nx, ny))
+
     # ── input ──────────────────────────────────────────────
 
     def _handle_input(self) -> None:
@@ -143,6 +155,8 @@ class Simulation:
             self.current_type = 2          # water
         elif pygame.K_3 in im.just_pressed_keys:
             self.current_type = 3          # wet sand (pre-wetted)
+        elif pygame.K_4 in im.just_pressed_keys:
+            self.current_type = 4          # water eraser
         elif pygame.K_d in im.just_pressed_keys:
             self._show_debug = not self._show_debug
 
@@ -163,9 +177,12 @@ class Simulation:
         gx, gy = self._get_brush_pos()
         r = self.brush_radius
 
-        # Left mouse → paint
+        # Left mouse → paint / water-erase
         if im.is_mouse_pressed(1):
-            self._paint(gx, gy, r)
+            if self.current_type == 4:
+                self._water_erase(gx, gy, r)
+            else:
+                self._paint(gx, gy, r)
 
         # Right mouse → erase
         if im.is_mouse_pressed(3):
@@ -209,7 +226,7 @@ class Simulation:
         font = pygame.font.SysFont("monospace", 10)
         total = sum(1 for row in self.grid.grid for c in row if c != EMPTY)
         asleep = sum(row.count(1) for row in self.grid.asleep)
-        type_names = {1: "sand", 2: "water", 3: "wet_sand"}
+        type_names = {1: "sand", 2: "water", 3: "wet_sand", 4: "water_eraser"}
         lines = [
             f"frame {self.grid.frame}",
             f"particles {total}  asleep {asleep}",
