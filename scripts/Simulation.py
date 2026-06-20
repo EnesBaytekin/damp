@@ -76,6 +76,8 @@ class Simulation:
         self._menu_options = ["PLAY", "QUIT"]
         self._menu_index = 0
         self._menu_drip_timer = 0
+        self._transition_alpha = 0
+        self._transition_dir = 0
 
         # ── graffiti ────────────────────────────────────────
         self._write_graffiti()
@@ -237,7 +239,7 @@ class Simulation:
         elif pygame.K_d in im.just_pressed_keys:
             self._show_debug = not self._show_debug
         elif pygame.K_ESCAPE in im.just_pressed_keys:
-            self._menu_active = True
+            self._reset_to_menu()
             return
 
         shrink = (pygame.K_LEFTBRACKET in im.just_pressed_keys or
@@ -290,6 +292,9 @@ class Simulation:
     # ── menu input ─────────────────────────────────────────
 
     def _handle_menu_input(self, im) -> None:
+        if self._transition_dir:
+            return
+
         if pygame.K_UP in im.just_pressed_keys or pygame.K_w in im.just_pressed_keys:
             self._menu_index = (self._menu_index - 1) % len(self._menu_options)
         elif pygame.K_DOWN in im.just_pressed_keys or pygame.K_s in im.just_pressed_keys:
@@ -298,23 +303,41 @@ class Simulation:
             self._menu_select()
         elif im.is_mouse_just_pressed(1):
             mx, my = im.get_mouse_position()
-            # Buttons are right-aligned, bottom area
-            mfw, mfh = 5, 7
-            mgap = 1
+            mfw, mgap = 5, 1
+            pad, gap = 2, 2
+            btn_w = max(len(o) for o in self._menu_options) * (mfw + mgap) - mgap + pad * 2 + 2
+            btn_h = 7 + 2
+            n = len(self._menu_options)
+            base_y = HEIGHT - 2 - n * btn_h - (n - 1) * gap
             for i, opt in enumerate(self._menu_options):
-                total_w = len(opt) * (mfw + mgap) - mgap
-                bx = WIDTH - total_w - 4          # same as draw
-                by = HEIGHT - 18 + i * 9
-                if bx - 2 <= mx <= bx + total_w + 2 and by - 2 <= my <= by + mfh + 2:
+                bx = WIDTH - btn_w - 2
+                by = base_y + i * (btn_h + gap)
+                if bx <= mx <= bx + btn_w and by <= my <= by + btn_h:
                     self._menu_index = i
                     self._menu_select()
                     return
 
     def _menu_select(self) -> None:
         if self._menu_options[self._menu_index] == "PLAY":
-            self._menu_active = False
+            self._transition_dir = 1
         elif self._menu_options[self._menu_index] == "QUIT":
             App().stop()
+
+    def _reset_to_menu(self) -> None:
+        """Clear grid, rewrite fresh graffiti, reset to initial menu state."""
+        for y in range(self.grid.height):
+            for x in range(self.grid.width):
+                self.grid.grid[y][x] = 0
+                self.grid.wetness[y][x] = 0.0
+                self.grid.asleep[y][x] = 0
+                self.grid.water_charge[y][x] = 0
+        self.grid.dirty = [(x, y) for y in range(self.grid.height) for x in range(self.grid.width)]
+        self.grid.frame = 0
+        self._write_graffiti()
+        self._menu_active = True
+        self._transition_dir = 0
+        self._transition_alpha = 0
+        self._menu_drip_timer = 0
 
     # ── per-frame update / render ──────────────────────────
 
@@ -322,7 +345,17 @@ class Simulation:
         """Called by pygaminal every frame."""
         self._handle_input()
 
-        if self._menu_active:
+        if self._transition_dir:
+            self._transition_alpha += self._transition_dir * 8
+            if self._transition_alpha >= 255:
+                self._transition_alpha = 255
+                self._transition_dir = -1
+                self._menu_active = False
+            elif self._transition_dir == -1 and self._transition_alpha <= 0:
+                self._transition_alpha = 0
+                self._transition_dir = 0
+
+        if self._menu_active and not self._transition_dir:
             self._menu_drip()
 
         self.grid.step()
@@ -356,16 +389,19 @@ class Simulation:
 
         self._menu_drip_timer = self.grid.rng.randint(15, 40)
 
-        is_water = self.grid.rng.random() < 0.25
+        is_water = self.grid.rng.random() < 0.35
         ptype = 2 if is_water else 1
-        wet = 2.0 if ptype == 1 else 0
+        wet = 0.0  # kuru kum
         r = self.grid.rng.randint(3, 6)  # radius
 
         cx = self.grid.rng.randint(r, WIDTH - 1 - r)
         # Spawn a circle of radius r at top
+        fill_ratio = self.grid.rng.uniform(0.4, 0.8)
         for dy in range(-r, r + 1):
             for dx in range(-r, r + 1):
                 if dx * dx + dy * dy <= r * r:
+                    if self.grid.rng.random() > fill_ratio:
+                        continue
                     x, y = cx + dx, dy
                     if 0 <= x < WIDTH and y < HEIGHT:
                         if self.grid.grid[y][x] == 0:
@@ -386,13 +422,22 @@ class Simulation:
         if self._show_debug:
             self._draw_debug()
 
+        # ── transition fade overlay ──
+        if self._transition_alpha > 0:
+            self._draw_fade()
+
+    def _draw_fade(self) -> None:
+        fade = pygame.Surface((WIDTH, HEIGHT))
+        fade.set_alpha(self._transition_alpha)
+        fade.fill((255, 255, 255))
+        Screen().surface.blit(fade, (0, 0))
+
     # ── menu ──────────────────────────────────────────────
 
     def _draw_menu(self) -> None:
         """Overlay menu UI on top of the running simulation."""
         screen = Screen()
 
-        # ── menu options (pixel font, bottom-right) ──
         MENU_FONT = {
             'P': ('11110','10001','10001','11110','10000','10000','10000'),
             'L': ('10000','10000','10000','10000','10000','10000','11111'),
@@ -405,13 +450,23 @@ class Simulation:
         }
         mfw, mfh = 5, 7
         mgap = 1
+        pad, gap = 2, 2
+        btn_w = max(len(o) for o in self._menu_options) * (mfw + mgap) - mgap + pad * 2 + 2
+        btn_h = mfh + 2
+        n = len(self._menu_options)
+        total_h = n * btn_h + (n - 1) * gap
+        base_y = HEIGHT - 2 - total_h
 
         for i, opt in enumerate(self._menu_options):
-            color = (255, 240, 200) if i == self._menu_index else (120, 110, 80)
-            total_w = len(opt) * (mfw + mgap) - mgap
-            ox = WIDTH - total_w - 4          # right-aligned, 4px padding
-            oy = HEIGHT - 18 + i * 9          # bottom area, 2px bottom padding
+            bx = WIDTH - btn_w - 2
+            by = base_y + i * (btn_h + gap)
 
+            self._draw_rounded_rect(screen.surface, bx, by, btn_w, btn_h, (15, 12, 30, 210), 3)
+
+            # text
+            color = (255, 240, 200) if i == self._menu_index else (150, 140, 110)
+            ox = bx + pad + 1
+            oy = by + (btn_h - mfh) // 2
             for ci, ch in enumerate(opt):
                 glyph = MENU_FONT.get(ch)
                 if not glyph:
@@ -424,6 +479,16 @@ class Simulation:
                             if 0 <= px < WIDTH and 0 <= py < HEIGHT:
                                 screen.surface.set_at((px, py), color)
 
+    def _draw_rounded_rect(self, surf, x, y, w, h, color, r):
+        """Draw a filled rounded rectangle."""
+        tmp = pygame.Surface((w, h), pygame.SRCALPHA)
+        c = color[:3]
+        pygame.draw.rect(tmp, c, (r, 0, w - r*2, h))
+        pygame.draw.rect(tmp, c, (0, r, w, h - r*2))
+        for cx, cy in ((r, r), (w - r - 1, r), (r, h - r - 1), (w - r - 1, h - r - 1)):
+            pygame.draw.circle(tmp, c, (cx, cy), r)
+        tmp.set_alpha(210)
+        surf.blit(tmp, (x, y))
     # ── toolbar ───────────────────────────────────────────
 
     def _draw_toolbar(self) -> None:
