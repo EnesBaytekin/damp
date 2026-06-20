@@ -53,9 +53,8 @@ class Simulation:
         # Cursor overlay surface (per-pixel alpha)
         self._cursor_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
-        # ── tool icons (4×4 with corners removed) ──────────
+        # ── tool icons (3×3 squares, no gap) ─────────────────
         self._tool_icons = {}
-        self._tool_highlights = {}
         icon_colors = {
             1: (194, 178, 128),   # sand
             2: (64, 164, 223),    # water
@@ -63,39 +62,9 @@ class Simulation:
             4: (90, 90, 90),      # water eraser
         }
         for tid, color in icon_colors.items():
-            surf = pygame.Surface((4, 4), pygame.SRCALPHA)
-            surf.fill((0, 0, 0, 0))
-            for y in range(4):
-                for x in range(4):
-                    if (x == 0 and y == 0) or (x == 3 and y == 0) or \
-                       (x == 0 and y == 3) or (x == 3 and y == 3):
-                        continue
-                    surf.set_at((x, y), color)
+            surf = pygame.Surface((3, 3))
+            surf.fill(color)
             self._tool_icons[tid] = surf
-
-            # highlight shape (6×6):
-            #  001100
-            #  011110
-            #  111111
-            #  111111
-            #  011110
-            #  001100
-            hl = pygame.Surface((6, 6), pygame.SRCALPHA)
-            hl.fill((0, 0, 0, 0))
-            hl_color = (200, 200, 200)
-            pattern = (
-                (0,0,1,1,0,0),
-                (0,1,1,1,1,0),
-                (1,1,1,1,1,1),
-                (1,1,1,1,1,1),
-                (0,1,1,1,1,0),
-                (0,0,1,1,0,0),
-            )
-            for y in range(6):
-                for x in range(6):
-                    if pattern[y][x]:
-                        hl.set_at((x, y), hl_color)
-            self._tool_highlights[tid] = hl
 
         self._show_debug = False
         self.sim_surf.fill(BG_COLOR)
@@ -274,25 +243,19 @@ class Simulation:
             self._draw_debug()
 
     def _draw_toolbar(self) -> None:
-        """Draw tool selector icons at top-left (4×4, 1px gap)."""
+        """Draw tool selector icons (3×3 squares, no gap, +2 offset)."""
         screen = Screen()
-        PITCH = 5
-        ox, oy = 1, 1
+        ox, oy = 2, 2
 
         for tid in (1, 2, 3, 4):
-            tx = ox + (tid - 1) * PITCH
-            if tid == self.current_type:
-                screen.surface.blit(self._tool_highlights[tid], (tx - 1, oy - 1))
+            tx = ox + (tid - 1) * 3
             screen.surface.blit(self._tool_icons[tid], (tx, oy))
 
-            if tid == self.current_type:
-                hi = (200, 200, 200)  # highlight color
-                # 8 pixels tracing the non-corner outline
-                for px, py in ((tx+1, oy-1), (tx+2, oy-1),
-                               (tx-1, oy+1), (tx-1, oy+2),
-                               (tx+4, oy+1), (tx+4, oy+2),
-                               (tx+1, oy+4), (tx+2, oy+4)):
-                    screen.surface.set_at((px, py), hi)
+        # highlight on top of everything
+        sel = self.current_type
+        sx = ox + (sel - 1) * 3
+        pygame.draw.rect(screen.surface, (200, 200, 200),
+                         (sx - 1, oy - 1, 5, 5), 1)
 
     def _draw_cursor(self) -> None:
         """Draw brush pattern matching spawn logic exactly (dx²+dy² ≤ r²)."""
