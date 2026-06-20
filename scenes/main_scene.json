@@ -1,0 +1,8 @@
+{
+    "width": 160,
+    "height": 90,
+    "background_color": "#1a1a2e",
+    "objects": [
+        {"file": "objects/simulation.obj", "x": 0, "y": 0}
+    ]
+}

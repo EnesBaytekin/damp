@@ -1,0 +1,7 @@
+{
+    "type_id": 1,
+    "name": "sand",
+    "color": [194, 178, 128],
+    "density": 2,
+    "script": "scripts/particles/SandParticle.py"
+}

@@ -1,0 +1,7 @@
+{
+    "type_id": 2,
+    "name": "water",
+    "color": [64, 164, 223],
+    "density": 1,
+    "script": "scripts/particles/WaterParticle.py"
+}
