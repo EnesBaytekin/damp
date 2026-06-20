@@ -38,7 +38,7 @@ class Simulation:
 
     def __init__(self):
         self.grid = Grid()
-        self.sim_surf = pygame.Surface((WIDTH, HEIGHT))
+        self.sim_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self._load_particle_types()
 
         # Brush state
@@ -72,7 +72,7 @@ class Simulation:
             self._tool_icons[tid] = surf
 
         self._show_debug = False
-        self.sim_surf.fill(BG_COLOR)
+        self.sim_surf.fill((0, 0, 0, 0))  # transparent
 
     # ── particle-type registry from .obj files ───────────────
 
@@ -278,7 +278,7 @@ class Simulation:
                 continue
             tid = self.grid.grid[y][x]
             if tid == EMPTY:
-                self.sim_surf.set_at((x, y), BG_COLOR)
+                self.sim_surf.set_at((x, y), (0, 0, 0, 0))  # transparent
             elif tid == 1:
                 # Sand — colour depends on wetness
                 raw = self.grid.wetness[y][x]
@@ -286,7 +286,10 @@ class Simulation:
                 self.sim_surf.set_at((x, y), SAND_COLORS[w])
             else:
                 info = self.grid.particle_types.get(tid)
-                self.sim_surf.set_at((x, y), info["color"] if info else (255, 255, 255))
+                color = info["color"] if info else (255, 255, 255)
+                if tid == 2:
+                    color = color[:3] + (160,)  # semi-transparent water
+                self.sim_surf.set_at((x, y), color)
         self.grid.dirty.clear()
 
     def draw(self, obj) -> None:

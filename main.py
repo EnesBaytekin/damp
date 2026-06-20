@@ -25,7 +25,9 @@ def main():
     Screen().width = LOGICAL_W
     Screen().height = LOGICAL_H
 
-    if scene.background_color:
+    if scene.background_image:
+        Screen().set_background_image(scene.background_image)
+    elif scene.background_color:
         Screen().set_background_color(scene.background_color)
 
     # ── Set up pygaminal singletons ─────────────────────────

@@ -1,0 +1,13 @@
+{
+    "name": "background",
+    "tags": ["background"],
+    "depth": -1,
+    "x": 0,
+    "y": 0,
+    "components": [
+        {
+            "file": "scripts/Background",
+            "args": []
+        }
+    ]
+}

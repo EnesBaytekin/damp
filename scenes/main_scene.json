@@ -3,6 +3,7 @@
     "height": 90,
     "background_color": "#1a1a2e",
     "objects": [
+        {"file": "objects/background.obj", "x": 0, "y": 0},
         {"file": "objects/simulation.obj", "x": 0, "y": 0}
     ]
 }
