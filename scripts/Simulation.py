@@ -32,55 +32,6 @@ SAND_COLORS = [
     (100,  80,  50),   # 3 soggy
 ]
 
-# ── chunky font (7×9, '1' = filled) ────────────────────────
-FONT = {
-    'D': (
-        '1111110',
-        '1100011',
-        '1100011',
-        '1100011',
-        '1100011',
-        '1100011',
-        '1100011',
-        '1100011',
-        '1111110',
-    ),
-    'A': (
-        '0011100',
-        '0110110',
-        '1100011',
-        '1100011',
-        '1111111',
-        '1100011',
-        '1100011',
-        '1100011',
-        '1100011',
-    ),
-    'M': (
-        '1100011',
-        '1110111',
-        '1111111',
-        '1101011',
-        '1100011',
-        '1100011',
-        '1100011',
-        '1100011',
-        '1100011',
-    ),
-    'P': (
-        '1111110',
-        '1100011',
-        '1100011',
-        '1100011',
-        '1111110',
-        '1100000',
-        '1100000',
-        '1100000',
-        '1100000',
-    ),
-}
-FONT_W, FONT_H, FONT_GAP = 7, 9, 2
-
 
 class Simulation:
     """Main simulation controller — one instance, attached to the scene object."""
@@ -124,7 +75,7 @@ class Simulation:
         self._menu_active = True
         self._menu_options = ["PLAY", "QUIT"]
         self._menu_index = 0
-        self._menu_drip_timer = 0   # frames until next top-drip strip
+        self._menu_drip_timer = 0
 
         # ── graffiti ────────────────────────────────────────
         self._write_graffiti()
@@ -135,28 +86,17 @@ class Simulation:
     # ── graffiti writer ────────────────────────────────────
 
     def _write_graffiti(self) -> None:
-        """Paint DAMP in wet sand using 2×2 blocks per font pixel, then put to sleep."""
-        text = "DAMP"
-        BLOCK = 2
-        total_w = len(text) * (FONT_W + FONT_GAP) * BLOCK - FONT_GAP * BLOCK
-        ox = (WIDTH - total_w) // 2
-        oy = (HEIGHT - FONT_H * BLOCK) // 2
-
-        for ci, ch in enumerate(text):
-            glyph = FONT.get(ch)
-            if not glyph:
-                continue
-            for row in range(FONT_H):
-                for col in range(FONT_W):
-                    if glyph[row][col] == '1':
-                        for by in range(BLOCK):
-                            for bx in range(BLOCK):
-                                x = ox + ci * (FONT_W + FONT_GAP) * BLOCK + col * BLOCK + bx
-                                y = oy + row * BLOCK + by
-                                if 0 <= x < WIDTH and 0 <= y < HEIGHT:
-                                    self.grid.spawn(x, y, 1)
-                                    self.grid.wetness[y][x] = 3.0
-                                    self.grid.asleep[y][x] = 1
+        """Read menu.png template, fill opaque pixels with wet sleeping sand."""
+        template = pygame.image.load("assets/menu.png")
+        w, h = template.get_size()
+        for y in range(h):
+            for x in range(w):
+                _, _, _, a = template.get_at((x, y))
+                if a > 128:
+                    if 0 <= x < WIDTH and 0 <= y < HEIGHT:
+                        self.grid.spawn(x, y, 1)
+                        self.grid.wetness[y][x] = 3.0
+                        self.grid.asleep[y][x] = 1
 
     # ── particle-type registry from .obj files ───────────────
 
@@ -286,7 +226,6 @@ class Simulation:
             self._handle_menu_input(im)
             return
 
-        # Switch brush type
         if pygame.K_1 in im.just_pressed_keys:
             self.current_type = 1
         elif pygame.K_2 in im.just_pressed_keys:
@@ -301,7 +240,6 @@ class Simulation:
             self._menu_active = True
             return
 
-        # Brush radius
         shrink = (pygame.K_LEFTBRACKET in im.just_pressed_keys or
                   pygame.K_MINUS in im.just_pressed_keys or
                   pygame.K_KP_MINUS in im.just_pressed_keys or
@@ -349,8 +287,9 @@ class Simulation:
             if im.is_mouse_pressed(3):
                 self._erase(gx, gy, r)
 
+    # ── menu input ─────────────────────────────────────────
+
     def _handle_menu_input(self, im) -> None:
-        """Navigate menu with up/down + enter, or click to select."""
         if pygame.K_UP in im.just_pressed_keys or pygame.K_w in im.just_pressed_keys:
             self._menu_index = (self._menu_index - 1) % len(self._menu_options)
         elif pygame.K_DOWN in im.just_pressed_keys or pygame.K_s in im.just_pressed_keys:
@@ -358,13 +297,15 @@ class Simulation:
         elif pygame.K_RETURN in im.just_pressed_keys or pygame.K_SPACE in im.just_pressed_keys:
             self._menu_select()
         elif im.is_mouse_just_pressed(1):
-            # Check if mouse clicked an option
             mx, my = im.get_mouse_position()
-            ox = WIDTH // 2 - 10
-            base_y = HEIGHT // 2 + 6
+            # Buttons are right-aligned, bottom area
+            mfw, mfh = 5, 7
+            mgap = 1
             for i, opt in enumerate(self._menu_options):
-                y = base_y + i * 8
-                if y - 2 <= my <= y + 6 and ox - 2 <= mx <= ox + 20:
+                total_w = len(opt) * (mfw + mgap) - mgap
+                bx = WIDTH - total_w - 4          # same as draw
+                by = HEIGHT - 18 + i * 9
+                if bx - 2 <= mx <= bx + total_w + 2 and by - 2 <= my <= by + mfh + 2:
                     self._menu_index = i
                     self._menu_select()
                     return
@@ -408,24 +349,29 @@ class Simulation:
         self.grid.dirty.clear()
 
     def _menu_drip(self) -> None:
-        """Spawn thin strips of sand/water from the top during menu."""
+        """Spawn random blobs of sand/water from the top during menu."""
         self._menu_drip_timer -= 1
         if self._menu_drip_timer > 0:
             return
 
         self._menu_drip_timer = self.grid.rng.randint(15, 40)
 
-        sx = self.grid.rng.randint(5, WIDTH - 10)
-        sw = self.grid.rng.randint(2, 4)
-        ptype = 2 if self.grid.rng.random() < 0.15 else 1
+        is_water = self.grid.rng.random() < 0.25
+        ptype = 2 if is_water else 1
         wet = 2.0 if ptype == 1 else 0
+        r = self.grid.rng.randint(3, 6)  # radius
 
-        for dx in range(sw):
-            x = sx + dx
-            if 0 <= x < WIDTH:
-                if self.grid.spawn(x, 0, ptype):
-                    if wet:
-                        self.grid.wetness[0][x] = wet
+        cx = self.grid.rng.randint(r, WIDTH - 1 - r)
+        # Spawn a circle of radius r at top
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx * dx + dy * dy <= r * r:
+                    x, y = cx + dx, dy
+                    if 0 <= x < WIDTH and y < HEIGHT:
+                        if self.grid.grid[y][x] == 0:
+                            if self.grid.spawn(x, y, ptype):
+                                if wet:
+                                    self.grid.wetness[y][x] = wet
 
     def draw(self, obj) -> None:
         """Blit sim surface → Screen surface (both 160×90). SCALED handles display."""
@@ -445,15 +391,38 @@ class Simulation:
     def _draw_menu(self) -> None:
         """Overlay menu UI on top of the running simulation."""
         screen = Screen()
-        font = pygame.font.SysFont("monospace", 8)
 
-        # ── menu options ──
+        # ── menu options (pixel font, bottom-right) ──
+        MENU_FONT = {
+            'P': ('11110','10001','10001','11110','10000','10000','10000'),
+            'L': ('10000','10000','10000','10000','10000','10000','11111'),
+            'A': ('01110','10001','10001','11111','10001','10001','10001'),
+            'Y': ('10001','10001','01010','00100','00100','00100','00100'),
+            'Q': ('01110','10001','10001','10001','10101','10010','01101'),
+            'U': ('10001','10001','10001','10001','10001','10001','01110'),
+            'I': ('11111','00100','00100','00100','00100','00100','11111'),
+            'T': ('11111','00100','00100','00100','00100','00100','00100'),
+        }
+        mfw, mfh = 5, 7
+        mgap = 1
+
         for i, opt in enumerate(self._menu_options):
             color = (255, 240, 200) if i == self._menu_index else (120, 110, 80)
-            label = font.render(opt, True, color)
-            tx = WIDTH // 2 - label.get_width() // 2
-            ty = HEIGHT // 2 + 6 + i * 8
-            screen.surface.blit(label, (tx, ty))
+            total_w = len(opt) * (mfw + mgap) - mgap
+            ox = WIDTH - total_w - 4          # right-aligned, 4px padding
+            oy = HEIGHT - 18 + i * 9          # bottom area, 2px bottom padding
+
+            for ci, ch in enumerate(opt):
+                glyph = MENU_FONT.get(ch)
+                if not glyph:
+                    continue
+                for row in range(mfh):
+                    for col in range(mfw):
+                        if glyph[row][col] == '1':
+                            px = ox + ci * (mfw + mgap) + col
+                            py = oy + row
+                            if 0 <= px < WIDTH and 0 <= py < HEIGHT:
+                                screen.surface.set_at((px, py), color)
 
     # ── toolbar ───────────────────────────────────────────
 
