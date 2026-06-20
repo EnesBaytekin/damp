@@ -146,10 +146,10 @@ class Simulation:
         elif pygame.K_d in im.just_pressed_keys:
             self._show_debug = not self._show_debug
 
-        # Brush radius
-        if pygame.K_LEFTBRACKET in im.just_pressed_keys:
+        # Brush radius — [ ] or - +
+        if pygame.K_LEFTBRACKET in im.just_pressed_keys or pygame.K_MINUS in im.just_pressed_keys:
             self.brush_radius = max(1, self.brush_radius - 1)
-        elif pygame.K_RIGHTBRACKET in im.just_pressed_keys:
+        elif pygame.K_RIGHTBRACKET in im.just_pressed_keys or pygame.K_EQUALS in im.just_pressed_keys:
             self.brush_radius = min(10, self.brush_radius + 1)
 
         gx, gy = self._get_brush_pos()

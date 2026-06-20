@@ -6,9 +6,9 @@ Behaviour is driven by the particle's *wetness* level (0-3):
   Level | Fall  | Diagonal | Sleep threshold | Max sleep | Re-sleep delay
   ------|-------|----------|-----------------|-----------|---------------
   0 dry | always | 100%    | never sleeps    | —         | —
-  1     | always |  60%    | ≥4 neighbours   | 60 fr     | 5 fr
-  2     | always |  20%    | ≥2 neighbours   | 300 fr    | 15 fr
-  3     | always |   0%    | ≥1 neighbour    | infinite  | 30 fr
+  1     | always |  60%    | ≥4 neighbours   | 30 s      | 1.5 s
+  2     | always |  20%    | ≥2 neighbours   | 150 s     | 3 s
+  3     | always |   0%    | ≥1 neighbour    | infinite  | 6 s
 """
 
 from scripts.Grid import Grid, HEIGHT
@@ -17,8 +17,8 @@ from scripts.Grid import Grid, HEIGHT
 # Indexed by wetness value (0-3)
 DIAGONAL_CHANCE   = [1.0, 0.6, 0.2, 0.0]
 SUPPORT_THRESHOLD = [999,   4,   2,   1]
-MAX_SLEEP_FRAMES  = [0,   60, 300, 2_000_000_000]
-RESLEEP_DELAY     = [0,    5,  15,  30]
+MAX_SLEEP_FRAMES  = [0, 1800, 9000, 2_000_000_000]  # 30s / 150s / ∞
+RESLEEP_DELAY     = [0,   90,  180,  360]             # 1.5s / 3s / 6s
 
 
 def update(grid: Grid, x: int, y: int) -> None:

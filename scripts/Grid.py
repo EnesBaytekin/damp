@@ -120,8 +120,8 @@ class Grid:
     # ── Drying ────────────────────────────────────────────────
 
     def _drying_step(self) -> None:
-        """Decrease wetness of all SAND particles every ~300 frames."""
-        if self.frame % 300 != 0:
+        """Decrease wetness of all SAND particles every ~900 frames (15s)."""
+        if self.frame % 900 != 0:
             return
         for y in range(self.height):
             for x in range(self.width):
@@ -133,6 +133,43 @@ class Grid:
                     if self.wetness[y][x] == 0 and self.asleep[y][x]:
                         self.asleep[y][x] = 0
                         self.wake_frame[y][x] = self.frame
+
+    # ── Wetness diffusion ─────────────────────────────────────
+
+    def _diffusion_step(self) -> None:
+        """Desynchronised slow wetness transfer.
+
+        Each particle has a ~1.7% chance per frame to attempt diffusion
+        (natural desync — no global timer).  Only transfers when
+        wetness *difference >= 2*, so 3→3, 3→2, and 1→0 never happen.
+        """
+        for y in range(self.height):
+            for x in range(self.width):
+                if self.grid[y][x] != 1:
+                    continue
+                w = self.wetness[y][x]
+                if w < 2:          # at least 2 needed to donate
+                    continue
+                if self.rng.random() > 1/60:   # ~1.7% this frame
+                    continue
+
+                # Collect neighbours that are at least 2 levels drier
+                candidates = []
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        if dx == 0 and dy == 0:
+                            continue
+                        nx, ny = x + dx, y + dy
+                        if 0 <= nx < self.width and 0 <= ny < self.height:
+                            if self.grid[ny][nx] == 1 and w - self.wetness[ny][nx] >= 2:
+                                candidates.append((nx, ny))
+                if not candidates:
+                    continue
+                tx, ty = self.rng.choice(candidates)
+                self.wetness[y][x] -= 1
+                self.wetness[ty][tx] += 1
+                self.dirty.append((x, y))
+                self.dirty.append((tx, ty))
 
     # ── Simulation step ──────────────────────────────────────
 
@@ -157,3 +194,4 @@ class Grid:
                     fn(self, x, y)
 
         self._drying_step()
+        self._diffusion_step()
