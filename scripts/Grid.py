@@ -120,17 +120,27 @@ class Grid:
     # ── Drying ────────────────────────────────────────────────
 
     def _drying_step(self) -> None:
-        """Decrease wetness of all SAND particles every ~900 frames (15s)."""
-        if self.frame % 900 != 0:
-            return
+        """Desynchronised drying — each particle rolls its own chance.
+
+        Higher wetness dries more slowly (more stable), lower wetness
+        dries faster.  Expected level lifetime at 60 fps:
+          wetness 3 → 2:  ~60 s  (1/3600 per frame)
+          wetness 2 → 1:  ~30 s  (1/1800)
+          wetness 1 → 0:  ~15 s  (1/900)
+          full 3 → 0:     ~105 s
+        """
+        DRY_CHANCE = [0, 1/900, 1/1800, 1/3600]
         for y in range(self.height):
             for x in range(self.width):
                 if self.grid[y][x] != 1:
                     continue
-                if self.wetness[y][x] > 0:
+                w = self.wetness[y][x]
+                if w <= 0:
+                    continue
+                if self.rng.random() < DRY_CHANCE[w]:
                     self.wetness[y][x] -= 1
                     self.dirty.append((x, y))
-                    if self.wetness[y][x] == 0 and self.asleep[y][x]:
+                    if w == 1 and self.asleep[y][x]:
                         self.asleep[y][x] = 0
                         self.wake_frame[y][x] = self.frame
 
