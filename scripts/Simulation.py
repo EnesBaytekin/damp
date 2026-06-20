@@ -50,6 +50,11 @@ class Simulation:
         # Eraser state
         self.eraser_active = False
 
+        # Line-drag state
+        self._line_start = None   # (x, y) when ctrl+click started
+        self._line_end = None     # current mouse during drag
+        self._line_button = 0     # 1=paint, 3=erase
+
         # Cursor overlay surface (per-pixel alpha)
         self._cursor_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
@@ -160,6 +165,36 @@ class Simulation:
                             self.grid.water_charge[ny][nx] = 0
                             self.grid.dirty.append((nx, ny))
 
+    def _line_cells(self, x0, y0, x1, y1):
+        """Bresenham line — yield (x, y) for every cell on the line."""
+        dx = abs(x1 - x0)
+        dy = -abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx + dy
+        x, y = x0, y0
+        while True:
+            yield x, y
+            if x == x1 and y == y1:
+                break
+            e2 = 2 * err
+            if e2 >= dy:
+                err += dy
+                x += sx
+            if e2 <= dx:
+                err += dx
+                y += sy
+
+    def _apply_brush_at(self, gx, gy):
+        """Apply current tool at (gx, gy) with brush_radius."""
+        r = self.brush_radius
+        if self._line_button == 3:  # erase
+            self._erase(gx, gy, r)
+        elif self.current_type == 4:
+            self._water_erase(gx, gy, r)
+        else:
+            self._paint(gx, gy, r)
+
     # ── input ──────────────────────────────────────────────
 
     def _handle_input(self) -> None:
@@ -195,16 +230,38 @@ class Simulation:
         self._cursor_pos = (gx, gy)
         r = self.brush_radius
 
-        # Left mouse → paint / water-erase
-        if im.is_mouse_pressed(1):
-            if self.current_type == 4:
-                self._water_erase(gx, gy, r)
-            else:
-                self._paint(gx, gy, r)
+        ctrl = pygame.K_LCTRL in im.pressed_keys or pygame.K_RCTRL in im.pressed_keys
 
-        # Right mouse → erase
-        if im.is_mouse_pressed(3):
-            self._erase(gx, gy, r)
+        # ── Line-drag mode ──────────────────────────────
+        if ctrl:
+            if im.is_mouse_just_pressed(1) or im.is_mouse_just_pressed(3):
+                self._line_start = (gx, gy)
+                self._line_end = (gx, gy)
+                self._line_button = 3 if im.is_mouse_just_pressed(3) else 1
+
+            if self._line_start is not None:
+                self._line_end = (gx, gy)
+
+            if (self._line_button == 1 and im.is_mouse_released(1)) or \
+               (self._line_button == 3 and im.is_mouse_released(3)):
+                for lx, ly in self._line_cells(*self._line_start, *self._line_end):
+                    self._apply_brush_at(lx, ly)
+                self._line_start = None
+                self._line_end = None
+                self._line_button = 0
+        else:
+            self._line_start = None
+            self._line_end = None
+            self._line_button = 0
+
+            if im.is_mouse_pressed(1):
+                if self.current_type == 4:
+                    self._water_erase(gx, gy, r)
+                else:
+                    self._paint(gx, gy, r)
+
+            if im.is_mouse_pressed(3):
+                self._erase(gx, gy, r)
 
     # ── per-frame update / render ──────────────────────────
 
@@ -258,13 +315,13 @@ class Simulation:
                          (sx - 1, oy - 1, 5, 5), 1)
 
     def _draw_cursor(self) -> None:
-        """Draw brush pattern matching spawn logic exactly (dx²+dy² ≤ r²)."""
+        """Draw brush pattern + line-drag preview."""
+        self._cursor_surf.fill((0, 0, 0, 0))
+        color = (255, 240, 200)
         cx, cy = self._cursor_pos
         r = self.brush_radius
 
-        self._cursor_surf.fill((0, 0, 0, 0))
-        color = (255, 240, 200)
-
+        # ── brush hotspot ──
         for dy in range(-r, r + 1):
             for dx in range(-r, r + 1):
                 if dx * dx + dy * dy <= r * r:
@@ -272,7 +329,17 @@ class Simulation:
                     if 0 <= px < WIDTH and 0 <= py < HEIGHT:
                         self._cursor_surf.set_at((px, py), color)
 
-        self._cursor_surf.set_alpha(100)
+        # ── line preview when dragging ──
+        if self._line_start is not None and self._line_end is not None:
+            for lx, ly in self._line_cells(*self._line_start, *self._line_end):
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if dx * dx + dy * dy <= r * r:
+                            px, py = lx + dx, ly + dy
+                            if 0 <= px < WIDTH and 0 <= py < HEIGHT:
+                                self._cursor_surf.set_at((px, py), color)
+
+        self._cursor_surf.set_alpha(80)
         Screen().surface.blit(self._cursor_surf, (0, 0))
 
     def _draw_debug(self) -> None:
