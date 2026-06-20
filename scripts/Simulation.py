@@ -45,9 +45,13 @@ class Simulation:
         self.current_type = 1          # 1=sand, 2=water, 3=wet sand
         self.brush_radius = 3
         self.spawn_rate = 8
+        self._cursor_pos = (0, 0)      # for cursor drawing
 
         # Eraser state
         self.eraser_active = False
+
+        # Cursor overlay surface (per-pixel alpha)
+        self._cursor_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
         self._show_debug = False
         self.sim_surf.fill(BG_COLOR)
@@ -170,11 +174,12 @@ class Simulation:
                   pygame.K_KP_PLUS in im.just_pressed_keys or
                   im.wheel_y > 0)
         if shrink:
-            self.brush_radius = max(1, self.brush_radius - 1)
+            self.brush_radius = max(0, self.brush_radius - 1)
         elif grow:
             self.brush_radius = min(10, self.brush_radius + 1)
 
         gx, gy = self._get_brush_pos()
+        self._cursor_pos = (gx, gy)
         r = self.brush_radius
 
         # Left mouse → paint / water-erase
@@ -218,8 +223,28 @@ class Simulation:
         """Blit sim surface → Screen surface (both 160×90). SCALED handles display."""
         Screen().surface.blit(self.sim_surf, (0, 0))
 
+        self._draw_cursor()
+
         if self._show_debug:
             self._draw_debug()
+
+    def _draw_cursor(self) -> None:
+        """Draw brush pattern matching spawn logic exactly (dx²+dy² ≤ r²)."""
+        cx, cy = self._cursor_pos
+        r = self.brush_radius
+
+        self._cursor_surf.fill((0, 0, 0, 0))
+        color = (255, 240, 200)
+
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx * dx + dy * dy <= r * r:
+                    px, py = cx + dx, cy + dy
+                    if 0 <= px < WIDTH and 0 <= py < HEIGHT:
+                        self._cursor_surf.set_at((px, py), color)
+
+        self._cursor_surf.set_alpha(100)
+        Screen().surface.blit(self._cursor_surf, (0, 0))
 
     def _draw_debug(self) -> None:
         """Simple stats overlay."""
