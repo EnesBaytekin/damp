@@ -146,10 +146,18 @@ class Simulation:
         elif pygame.K_d in im.just_pressed_keys:
             self._show_debug = not self._show_debug
 
-        # Brush radius — [ ] or - +
-        if pygame.K_LEFTBRACKET in im.just_pressed_keys or pygame.K_MINUS in im.just_pressed_keys:
+        # Brush radius — [ ] - = wheel numpad+ numpad-
+        shrink = (pygame.K_LEFTBRACKET in im.just_pressed_keys or
+                  pygame.K_MINUS in im.just_pressed_keys or
+                  pygame.K_KP_MINUS in im.just_pressed_keys or
+                  im.wheel_y < 0)
+        grow   = (pygame.K_RIGHTBRACKET in im.just_pressed_keys or
+                  pygame.K_EQUALS in im.just_pressed_keys or
+                  pygame.K_KP_PLUS in im.just_pressed_keys or
+                  im.wheel_y > 0)
+        if shrink:
             self.brush_radius = max(1, self.brush_radius - 1)
-        elif pygame.K_RIGHTBRACKET in im.just_pressed_keys or pygame.K_EQUALS in im.just_pressed_keys:
+        elif grow:
             self.brush_radius = min(10, self.brush_radius + 1)
 
         gx, gy = self._get_brush_pos()

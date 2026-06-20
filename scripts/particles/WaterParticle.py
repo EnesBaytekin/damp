@@ -1,17 +1,41 @@
-
 """
 Water particle — falls down, spreads sideways, fills gaps.
 
-Wets adjacent sand: each water has 6 charge.  Water flows FIRST,
-then if it can't move anywhere it dumps charge into adjacent sand
-(so water doesn't vanish before it has a chance to flow).
-
+Wets adjacent sand as it flows: each frame water tries to dump 1 charge
+into any adjacent unsaturated sand *before* moving, so it leaves a trail
+of wet sand behind as it flows.  The remaining charge keeps it flowing.
 Edge-flow: when below is empty, water checks diagonals — if there's sand
-forming a wall on the diagonal's far side, water flows *along* the wall
-instead of falling straight down (cliff-edge waterfall behaviour).
+forming a wall, water flows *along* the wall instead of falling straight.
 """
 
 from scripts.Grid import Grid
+
+
+def _wet_adjacent(grid: Grid, x: int, y: int) -> bool:
+    """Dump 1 charge into an adjacent unsaturated sand.  Returns True if
+    the water was exhausted (charge hit 0)."""
+    if grid.water_charge[y][x] <= 0:
+        return False
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < grid.width and 0 <= ny < grid.height:
+                if grid.grid[ny][nx] == 1 and grid.wetness[ny][nx] < 3.0:
+                    grid.wetness[ny][nx] += 0.5
+                    grid.water_charge[y][x] -= 1
+                    grid.dirty.append((nx, ny))
+                    if grid.water_charge[y][x] == 0:
+                        grid.grid[y][x] = 0
+                        grid.water_charge[y][x] = 0
+                        grid.dirty.append((x, y))
+                        return True
+                    break
+        else:
+            continue
+        break
+    return False
 
 
 def _flow(grid: Grid, x: int, y: int) -> bool:
@@ -66,34 +90,39 @@ def _flow(grid: Grid, x: int, y: int) -> bool:
 
 
 def update(grid: Grid, x: int, y: int) -> None:
-    # ── 0 — try to flow first ─────────────────────────────
-    if _flow(grid, x, y):
-        return  # moved — done for this frame
+    # ── 0 — wet adjacent sand (1 charge per frame while flowing) ─
+    if grid.water_charge[y][x] > 0:
+        if _wet_adjacent(grid, x, y):
+            return  # exhausted — vanished
 
-    # ── 1 — can't move → dump charge into adjacent sand ────
+    # ── 1 — try to flow ─────────────────────────────────────
+    if _flow(grid, x, y):
+        return  # moved
+
+    # ── 2 — can't move → dump remaining charge into sand ────
     charge = grid.water_charge[y][x]
     if charge > 0:
-        targets = []
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                if dx == 0 and dy == 0:
-                    continue
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < grid.width and 0 <= ny < grid.height:
-                    if grid.grid[ny][nx] == 1 and grid.wetness[ny][nx] < 3.0:
-                        targets.append((nx, ny, grid.wetness[ny][nx]))
+        while charge > 0:
+            dumped = False
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < grid.width and 0 <= ny < grid.height:
+                        if grid.grid[ny][nx] == 1 and grid.wetness[ny][nx] < 3.0:
+                            grid.wetness[ny][nx] += 0.5
+                            grid.water_charge[y][x] -= 1
+                            grid.dirty.append((nx, ny))
+                            charge -= 1
+                            dumped = True
+                            break
+                if dumped:
+                    break
+            if not dumped:
+                break
 
-        if targets:
-            targets.sort(key=lambda t: t[2])  # driest first
-
-            for nx, ny, _ in targets:
-                while grid.wetness[ny][nx] < 3.0 and grid.water_charge[y][x] > 0:
-                    grid.wetness[ny][nx] += 0.5
-                    grid.water_charge[y][x] -= 1
-                    grid.dirty.append((nx, ny))
-
-                if grid.water_charge[y][x] == 0:
-                    grid.grid[y][x] = 0
-                    grid.water_charge[y][x] = 0
-                    grid.dirty.append((x, y))
-                    return
+        if grid.water_charge[y][x] == 0:
+            grid.grid[y][x] = 0
+            grid.water_charge[y][x] = 0
+            grid.dirty.append((x, y))
