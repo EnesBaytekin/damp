@@ -8,7 +8,7 @@ Edge-flow: when below is empty, water checks diagonals — if there's sand
 forming a wall, water flows *along* the wall instead of falling straight.
 """
 
-from scripts.Grid import Grid
+from scripts.Chunk import Chunk as Grid
 
 
 def _wet_adjacent(grid: Grid, x: int, y: int) -> bool:

@@ -11,12 +11,12 @@ Behaviour is driven by the particle's *wetness* level (float → int floor):
   3     | always |   0%    | ≥1 neighbour    | infinite  | 6 s
 """
 
-from scripts.Grid import Grid
+from scripts.Chunk import Chunk as Grid
 
 # ── wetness-level tables ──────────────────────────────────────
 # Indexed by int wetness level (0-3)
-DIAGONAL_CHANCE   = [1.0, 0.6, 0.2, 0.0]
-SUPPORT_THRESHOLD = [999,   4,   2,   1]
+DIAGONAL_CHANCE   = [0.3, 0.3, 0.2, 0.0]
+SUPPORT_THRESHOLD = [  4,   3,   2,   1]
 MAX_SLEEP_FRAMES  = [0, 1800, 9000, 2_000_000_000]  # 30s / 150s / ∞
 RESLEEP_DELAY     = [0,   90,  180,  360]             # 1.5s / 3s / 6s
 
@@ -27,21 +27,18 @@ def update(grid: Grid, x: int, y: int) -> None:
     level = min(int(wet), 3)          # 0-3 for table lookups
     h = grid.height
 
-    # ── SLEEP CHECK ─────────────────────────────────────────
+    # ── SLEEP CHECK (lazy support_count) ──────────────────────
     if grid.asleep[y][x]:
-        support = grid.support_count(x, y)
-        wake = False
         if grid.disturbed[y][x] == grid.frame:
-            wake = True                         # disturbance above
-        elif support < SUPPORT_THRESHOLD[level]:
-            wake = True                         # lost support
+            pass  # wake
         elif level < 3 and (grid.frame - grid.wake_frame[y][x]) > MAX_SLEEP_FRAMES[level]:
-            wake = True                         # timer expired
+            pass  # timer expired
+        else:
+            # Expensive check — only when cheap ones fail
+            if grid.support_count(x, y) >= SUPPORT_THRESHOLD[level]:
+                return  # keep sleeping
+            # else: lost support → wake
 
-        if not wake:
-            return  # stay asleep
-
-        # Wake up
         grid.asleep[y][x] = 0
         grid.wake_frame[y][x] = grid.frame
         # fall through to movement
@@ -75,9 +72,8 @@ def update(grid: Grid, x: int, y: int) -> None:
             return
 
     # ── COULDN'T MOVE → try to sleep ──────────────────────
-    if level >= 1:
-        support = grid.support_count(x, y)
-        if support >= SUPPORT_THRESHOLD[level]:
-            frames_awake = grid.frame - grid.wake_frame[y][x]
-            if frames_awake >= RESLEEP_DELAY[level]:
-                grid.asleep[y][x] = 1
+    support = grid.support_count(x, y)
+    if support >= SUPPORT_THRESHOLD[level]:
+        frames_awake = grid.frame - grid.wake_frame[y][x]
+        if frames_awake >= RESLEEP_DELAY[level]:
+            grid.asleep[y][x] = 1

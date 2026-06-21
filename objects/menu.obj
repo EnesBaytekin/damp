@@ -1,0 +1,13 @@
+{
+    "name": "menu",
+    "tags": ["menu"],
+    "depth": 0,
+    "x": 0,
+    "y": 0,
+    "components": [
+        {
+            "file": "scripts/MenuController",
+            "args": []
+        }
+    ]
+}

@@ -11,13 +11,26 @@ LOGICAL_W = 160
 LOGICAL_H = 90
 
 
+def get_component(scene, class_name):
+    """Find a component instance by class name in a scene's objects."""
+    for obj in scene.objects.values():
+        for comp in obj.components.values():
+            if type(comp.instance).__name__ == class_name:
+                return comp.instance
+    return None
+
+
+def load_scene(scene_name: str) -> Scene:
+    scene = Scene.get_scene_from_json(f"scenes/{scene_name}_scene.json")
+    app.scenes = {scene_name: scene}
+    app.current_scene_name = scene_name
+    scene.update()
+    return scene
+
+
 def main():
     pygame.init()
 
-    # Load scene
-    scene = Scene.get_scene_from_json("scenes/main_scene.json")
-
-    # ── FULLSCREEN + SCALED display ──────────────────────────
     Screen().surface = pygame.display.set_mode(
         (LOGICAL_W, LOGICAL_H),
         pygame.FULLSCREEN | pygame.SCALED,
@@ -25,26 +38,22 @@ def main():
     Screen().width = LOGICAL_W
     Screen().height = LOGICAL_H
 
-    if scene.background_image:
-        Screen().set_background_image(scene.background_image)
-    elif scene.background_color:
-        Screen().set_background_color(scene.background_color)
-
-    # ── Set up pygaminal singletons ─────────────────────────
     InputManager().init()
     AudioManager().init()
-    pygame.display.set_caption("Sandcastle Builder")
+    pygame.display.set_caption("Damp")
 
+    global app
     app = App()
     app.width = LOGICAL_W
     app.height = LOGICAL_H
-    app.scenes = {"main": scene}
-    app.current_scene_name = "main"
     app.running = True
     app.target_fps = 60
     app.clock = pygame.time.Clock()
 
-    # ── Game loop ──────────────────────────────────────────
+    # ── Start with menu scene ──────────────────────────────
+    load_scene("menu")
+    menu_ctrl = get_component(app.get_current_scene(), "MenuController")
+
     input_mgr = InputManager()
     app.now = time()
     last_time = app.now
@@ -52,12 +61,23 @@ def main():
     while app.running:
         input_mgr.update()
 
-        # F11 toggle — InputManager stores just-pressed keys
         if pygame.K_F11 in input_mgr.just_pressed_keys:
             pygame.display.toggle_fullscreen()
 
-        scene.update()
+        scene = app.get_current_scene()
 
+        # ── Scene switching ────────────────────────────────
+        if menu_ctrl and menu_ctrl.game_started:
+            load_scene("game")
+            menu_ctrl = None
+
+        if not menu_ctrl:
+            world_ctrl = get_component(app.get_current_scene(), "WorldController")
+            if world_ctrl and world_ctrl.quit_to_menu:
+                load_scene("menu")
+                menu_ctrl = get_component(app.get_current_scene(), "MenuController")
+
+        scene.update()
         Screen().clear()
         scene.draw()
         Screen().refresh()

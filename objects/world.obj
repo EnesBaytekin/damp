@@ -1,0 +1,13 @@
+{
+    "name": "world",
+    "tags": ["world"],
+    "depth": 0,
+    "x": 0,
+    "y": 0,
+    "components": [
+        {
+            "file": "scripts/WorldController",
+            "args": []
+        }
+    ]
+}
