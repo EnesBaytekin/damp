@@ -49,6 +49,10 @@ class Player:
     # ── physics ────────────────────────────────────────────
 
     def _solid(self, wx: int, wy: int) -> bool:
+        if wy >= 90:
+            return True
+        if wy < 0:
+            return False
         return self.cm.get_cell(wx, wy) == 1
 
     def _hitbox_free(self, rx: float, ry: float) -> bool:

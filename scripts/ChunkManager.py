@@ -1,259 +1,230 @@
 """
-ChunkManager — owns all Chunks, handles cross-chunk movement,
-activation radius, and terrain generation.
+ChunkManager — owns all horizontal chunks (32×90), handles cross-chunk
+movement and terrain generation.
+
+World is infinite horizontally.  Each chunk is a 32-wide × 90-tall column.
 """
 
 import random
-from scripts.Chunk import Chunk, CHUNK_SIZE, EMPTY
+import math
+from scripts.Chunk import Chunk, CHUNK_SIZE, CHUNK_HEIGHT, EMPTY
 
+
+def _smooth_noise(wx: int, seed: int) -> float:
+    """Very smooth 1D pseudo-noise by cosine-interpolating sparse samples.
+
+    Returns 0.0-1.0.  Samples every ~6 pixels so neighbouring columns
+    interpolate smoothly without abrupt cliffs.
+    """
+    spacing = 80.0
+    p = wx / spacing
+    i0 = int(math.floor(p))
+    i1 = i0 + 1
+
+    def _sample(idx: int) -> float:
+        h = hash((idx, seed, 0xBEAD))
+        h = (h * 0x9E3779B9) & 0xFFFFFFFF
+        return (h % 10000) / 10000.0
+
+    v0 = _sample(i0)
+    v1 = _sample(i1)
+    t = p - i0
+    # Cosine interpolation for smooth curves
+    ct = (1.0 - math.cos(t * math.pi)) * 0.5
+    return v0 + (v1 - v0) * ct
+
+
+def _height_at(wx: int, seed: int) -> int:
+    """Terrain height (0-80) at world x — smooth hilly terrain."""
+    raw = _smooth_noise(wx, seed)
+    return int(raw * 80)
+
+
+# ── ChunkManager ───────────────────────────────────────────
 
 class ChunkManager:
-    """Dict of chunks + cross-chunk movement buffers."""
+    """Horizontally-chunked world manager."""
 
     def __init__(self, seed: int = 0):
         self.seed = seed
-        self.chunks: dict[tuple[int, int], Chunk] = {}
+        self.chunks: dict[int, Chunk] = {}
         self.rng = random.Random(seed)
         self.frame = 0
-
-        # Cross-chunk movement buffer: list of (src_wx, src_wy, dst_wx, dst_wy)
         self._cross_moves: list[tuple[int, int, int, int]] = []
-        # Diffusion transfers: list of (dst_wx, dst_wy, amount)
-        self._diffusion_xfers: list[tuple[int, int, float]] = []
+        self._diffusion_xfers: list[tuple[int, int, int, int, int, int, float]] = []
+        self._ptypes: dict = {}
 
-    # ── chunk access ───────────────────────────────────────
-
-    def get_chunk(self, cx: int, cy: int, create: bool = True) -> Chunk | None:
-        key = (cx, cy)
-        if key not in self.chunks and create:
-            c = Chunk(cx, cy, manager=self)
-            c.particle_types = self._particle_types() if hasattr(self, '_ptypes') else {}
-            self.chunks[key] = c
+    def get_chunk(self, cx: int, create: bool = True) -> Chunk | None:
+        if cx not in self.chunks and create:
+            c = Chunk(cx, manager=self)
+            c.particle_types = self._ptypes
+            self.chunks[cx] = c
             return c
-        return self.chunks.get(key)
-
-    def _particle_types(self):
-        return getattr(self, '_ptypes', {})
+        return self.chunks.get(cx)
 
     def set_particle_types(self, types: dict):
         self._ptypes = types
-        for chunk in self.chunks.values():
-            chunk.particle_types = types
+        for c in self.chunks.values():
+            c.particle_types = types
 
     def register(self, type_id: int, props: dict):
-        if not hasattr(self, '_ptypes') or not self._ptypes:
-            self._ptypes = {}
         self._ptypes[type_id] = props
-        for chunk in self.chunks.values():
-            chunk.particle_types = self._ptypes
+        for c in self.chunks.values():
+            c.particle_types = self._ptypes
 
     # ── world-level cell access ────────────────────────────
 
     def get_cell(self, wx: int, wy: int) -> int:
-        cx, cy, lx, ly = self._world_to_local(wx, wy)
-        chunk = self.get_chunk(cx, cy, create=False)
-        if chunk is None:
+        cx, lx = wx // CHUNK_SIZE, wx % CHUNK_SIZE
+        if not (0 <= wy < CHUNK_HEIGHT):
             return EMPTY
-        return chunk.grid[ly][lx]
+        chunk = self.get_chunk(cx, create=False)
+        return EMPTY if chunk is None else chunk.grid[wy][lx]
 
     def get_wetness(self, wx: int, wy: int) -> float:
-        cx, cy, lx, ly = self._world_to_local(wx, wy)
-        chunk = self.get_chunk(cx, cy, create=False)
-        if chunk is None:
+        cx, lx = wx // CHUNK_SIZE, wx % CHUNK_SIZE
+        if not (0 <= wy < CHUNK_HEIGHT):
             return 0.0
-        return chunk.wetness[ly][lx]
+        chunk = self.get_chunk(cx, create=False)
+        return 0.0 if chunk is None else chunk.wetness[wy][lx]
 
     def set_cell(self, wx: int, wy: int, type_id: int) -> bool:
-        cx, cy, lx, ly = self._world_to_local(wx, wy)
-        chunk = self.get_chunk(cx, cy)
-        if chunk.spawn(lx, ly, type_id):
-            return True
-        return False
+        if not (0 <= wy < CHUNK_HEIGHT):
+            return False
+        cx, lx = wx // CHUNK_SIZE, wx % CHUNK_SIZE
+        return self.get_chunk(cx).spawn(lx, wy, type_id)
 
     def set_cell_with_wetness(self, wx: int, wy: int, type_id: int, wetness: float) -> bool:
-        cx, cy, lx, ly = self._world_to_local(wx, wy)
-        chunk = self.get_chunk(cx, cy)
-        if chunk.spawn(lx, ly, type_id):
-            chunk.wetness[ly][lx] = wetness
+        if not (0 <= wy < CHUNK_HEIGHT):
+            return False
+        cx, lx = wx // CHUNK_SIZE, wx % CHUNK_SIZE
+        chunk = self.get_chunk(cx)
+        if chunk.spawn(lx, wy, type_id):
+            chunk.wetness[wy][lx] = wetness
             return True
         return False
 
     def can_occupy_world(self, wx: int, wy: int, mover_id: int) -> bool:
-        cx, cy, lx, ly = self._world_to_local(wx, wy)
-        chunk = self.get_chunk(cx, cy, create=False)
+        cx, lx = wx // CHUNK_SIZE, wx % CHUNK_SIZE
+        if not (0 <= wy < CHUNK_HEIGHT):
+            return False
+        chunk = self.get_chunk(cx, create=False)
         if chunk is None:
-            return True  # ungenerated = empty = always occupy
-        return chunk.can_occupy(lx, ly, mover_id)
+            return True
+        return chunk.can_occupy(lx, wy, mover_id)
 
     # ── cross-chunk movement ───────────────────────────────
 
-    def add_cross_chunk_move(self, wx1: int, wy1: int, wx2: int, wy2: int):
+    def add_cross_chunk_move(self, wx1, wy1, wx2, wy2):
         self._cross_moves.append((wx1, wy1, wx2, wy2))
 
-    def add_diffusion_transfer(self, src_cx: int, src_cy: int, src_lx: int, src_ly: int,
-                                dst_wx: int, dst_wy: int, src_w: float):
+    def add_diffusion_transfer(self, src_cx, src_cy, src_lx, src_ly,
+                                dst_wx, dst_wy, src_w):
         self._diffusion_xfers.append((src_cx, src_cy, src_lx, src_ly, dst_wx, dst_wy, src_w))
 
     def _apply_cross_moves(self):
-        """Apply buffered cross-chunk moves after all chunks have stepped."""
         for wx1, wy1, wx2, wy2 in self._cross_moves:
-            # Source chunk
-            cx1, cy1, lx1, ly1 = self._world_to_local(wx1, wy1)
-            chunk1 = self.get_chunk(cx1, cy1, create=False)
-            if chunk1 is None:
+            cx1, lx1 = wx1 // CHUNK_SIZE, wx1 % CHUNK_SIZE
+            cx2, lx2 = wx2 // CHUNK_SIZE, wx2 % CHUNK_SIZE
+            chunk1 = self.get_chunk(cx1, create=False)
+            if chunk1 is None or not (0 <= wy1 < CHUNK_HEIGHT):
                 continue
-
-            # Target chunk
-            cx2, cy2, lx2, ly2 = self._world_to_local(wx2, wy2)
-            chunk2 = self.get_chunk(cx2, cy2)
-
-            # Read source state
-            t1 = chunk1.grid[ly1][lx1]
+            t1 = chunk1.grid[wy1][lx1]
             if t1 == EMPTY:
                 continue
-            w1 = chunk1.wetness[ly1][lx1]
-            a1 = chunk1.asleep[ly1][lx1]
-            wf1 = chunk1.wake_frame[ly1][lx1]
-            c1 = chunk1.water_charge[ly1][lx1]
+            chunk2 = self.get_chunk(cx2)
+            if not (0 <= wy2 < CHUNK_HEIGHT):
+                continue
+            t2 = chunk2.grid[wy2][lx2]
 
-            # Read target state
-            t2 = chunk2.grid[ly2][lx2]
             if t2 != EMPTY:
-                # Check density
-                mover = chunk1.particle_types.get(t1)
-                target_t = chunk2.particle_types.get(t2)
-                if not (mover and target_t and mover["density"] > target_t["density"]):
+                m = chunk1.particle_types.get(t1)
+                tt = chunk2.particle_types.get(t2)
+                if not (m and tt and m["density"] > tt["density"]):
                     continue
-                # Swap: move target back to source
-                chunk2.grid[ly2][lx2] = t1
-                chunk2.wetness[ly2][lx2] = w1
-                chunk2.asleep[ly2][lx2] = a1
-                chunk2.wake_frame[ly2][lx2] = wf1
-                chunk2.water_charge[ly2][lx2] = c1
-                chunk2.dirty.append((lx2, ly2))
-                chunk2.updated[ly2][lx2] = chunk2.frame
-
-                chunk1.grid[ly1][lx1] = t2
-                chunk1.wetness[ly1][lx1] = chunk2.wetness[ly2][lx2]  # already swapped above
-                chunk1.dirty.append((lx1, ly1))
-                chunk1.updated[ly1][lx1] = chunk1.frame
+                chunk2.grid[wy2][lx2] = t1
+                chunk2.wetness[wy2][lx2] = chunk1.wetness[wy1][lx1]
+                chunk2.asleep[wy2][lx2] = chunk1.asleep[wy1][lx1]
+                chunk2.wake_frame[wy2][lx2] = chunk1.wake_frame[wy1][lx1]
+                chunk2.water_charge[wy2][lx2] = chunk1.water_charge[wy1][lx1]
+                chunk2.dirty.append((lx2, wy2))
+                chunk2.updated[wy2][lx2] = chunk2.frame
+                chunk1.grid[wy1][lx1] = t2
+                chunk1.wetness[wy1][lx1] = chunk2.wetness[wy2][lx2]
+                chunk1.dirty.append((lx1, wy1))
+                chunk1.updated[wy1][lx1] = chunk1.frame
             else:
-                # Simple move
-                chunk2.grid[ly2][lx2] = t1
-                chunk2.wetness[ly2][lx2] = w1
-                chunk2.asleep[ly2][lx2] = a1
-                chunk2.wake_frame[ly2][lx2] = wf1
-                chunk2.water_charge[ly2][lx2] = c1
-                chunk2.dirty.append((lx2, ly2))
-                chunk2.updated[ly2][lx2] = chunk2.frame
+                chunk2.grid[wy2][lx2] = t1
+                chunk2.wetness[wy2][lx2] = chunk1.wetness[wy1][lx1]
+                chunk2.asleep[wy2][lx2] = chunk1.asleep[wy1][lx1]
+                chunk2.wake_frame[wy2][lx2] = chunk1.wake_frame[wy1][lx1]
+                chunk2.water_charge[wy2][lx2] = chunk1.water_charge[wy1][lx1]
+                chunk2.dirty.append((lx2, wy2))
+                chunk2.updated[wy2][lx2] = chunk2.frame
                 chunk2.filled_count += 1
-
-                # Clear source
-                chunk1.grid[ly1][lx1] = EMPTY
-                chunk1.wetness[ly1][lx1] = 0.0
-                chunk1.asleep[ly1][lx1] = 0
-                chunk1.wake_frame[ly1][lx1] = 0
-                chunk1.water_charge[ly1][lx1] = 0
-                chunk1.dirty.append((lx1, ly1))
+                chunk1.grid[wy1][lx1] = EMPTY
+                chunk1.wetness[wy1][lx1] = 0.0
+                chunk1.asleep[wy1][lx1] = 0
+                chunk1.wake_frame[wy1][lx1] = 0
+                chunk1.water_charge[wy1][lx1] = 0
+                chunk1.dirty.append((lx1, wy1))
                 chunk1.filled_count -= 1
 
         self._cross_moves.clear()
-
-        # Apply diffusion transfers
-        for src_cx, src_cy, src_lx, src_ly, dst_wx, dst_wy, src_w in self._diffusion_xfers:
-            chunk1 = self.get_chunk(src_cx, src_cy, create=False)
-            if chunk1 is None:
-                continue
-            cx2, cy2, lx2, ly2 = self._world_to_local(dst_wx, dst_wy)
-            chunk2 = self.get_chunk(cx2, cy2)
-            if chunk2.grid[ly2][lx2] != 1:
-                continue
-            nw = chunk2.wetness[ly2][lx2]
-            if not (src_w - nw >= 1.0):
-                continue
-            chunk1.wetness[src_ly][src_lx] -= 0.5
-            chunk2.wetness[ly2][lx2] += 0.5
-            chunk1.dirty.append((src_lx, src_ly))
-            chunk2.dirty.append((lx2, ly2))
-
         self._diffusion_xfers.clear()
-
-    # ── coordinate helpers ─────────────────────────────────
-
-    @staticmethod
-    def _world_to_local(wx: int, wy: int) -> tuple[int, int, int, int]:
-        return wx // CHUNK_SIZE, wy // CHUNK_SIZE, wx % CHUNK_SIZE, wy % CHUNK_SIZE
 
     # ── activation & stepping ──────────────────────────────
 
-    def get_chunks_in_radius(self, center_wx: int, center_wy: int, radius_chunks: int) -> list[tuple[int, int]]:
-        """Return list of (cx, cy) for chunks within radius of world position."""
+    def get_chunks_in_radius(self, center_wx: int, radius_chunks: int) -> list[int]:
         c_cx = center_wx // CHUNK_SIZE
-        c_cy = center_wy // CHUNK_SIZE
-        result = []
-        for dy in range(-radius_chunks, radius_chunks + 1):
-            for dx in range(-radius_chunks, radius_chunks + 1):
-                if dx * dx + dy * dy <= radius_chunks * radius_chunks:
-                    result.append((c_cx + dx, c_cy + dy))
-        return result
+        return [c_cx + dx for dx in range(-radius_chunks, radius_chunks + 1)]
 
-    def step_active(self, center_wx: int, center_wy: int, radius: int = 6):
-        """Step all chunks within *radius* chunks of the player."""
+    def step_active(self, center_wx: int, radius: int = 3):
         self.frame += 1
-        keys = self.get_chunks_in_radius(center_wx, center_wy, radius)
-
-        # Step each active chunk
-        for cx, cy in keys:
-            chunk = self.get_chunk(cx, cy, create=False)
+        for cx in self.get_chunks_in_radius(center_wx, radius):
+            chunk = self.get_chunk(cx, create=False)
             if chunk is not None and chunk.filled_count > 0:
                 chunk.step()
-
-        # Apply cross-chunk changes
         self._apply_cross_moves()
 
     # ── terrain generation ─────────────────────────────────
 
-    def generate_terrain(self, cx: int, cy: int):
-        """Fill a chunk with procedural terrain (simple for now)."""
-        chunk = self.get_chunk(cx, cy)
+    def generate_terrain(self, cx: int):
+        """Fill chunk at cx with terrain.
+
+        Layers (top→bottom):
+          0-9:            air
+          10 → 90-height: air
+          90-height → 89: sand
+          70-89:          water (only where not already sand)
+        """
+        chunk = self.get_chunk(cx)
         if chunk is None or chunk.filled_count > 0:
             return
 
-        seed = self.seed + cx * 1000 + cy * 777
-        rng = random.Random(seed)
+        heights = [_height_at(cx * CHUNK_SIZE + lx, self.seed) for lx in range(CHUNK_SIZE)]
 
-        for ly in range(CHUNK_SIZE):
-            for lx in range(CHUNK_SIZE):
-                wx = cx * CHUNK_SIZE + lx
-                wy = cy * CHUNK_SIZE + ly
+        for lx in range(CHUNK_SIZE):
+            wx = cx * CHUNK_SIZE + lx
+            h_val = heights[lx]
+            sand_top = 90 - h_val
 
-                # Simple height-based terrain using nested random
-                height_val = rng.random() * 2 - 1  # -1..1
+            # sand layer (90-height → 89)
+            for ly in range(sand_top, CHUNK_HEIGHT):
+                h2 = hash((wx, ly, self.seed, 0xCAFE))
+                h2 = (h2 * 0x9E3779B9) & 0xFFFFFFFF
+                wet = (h2 % 6) / 2.0
+                chunk.spawn(lx, ly, 1)
+                if wet > 0:
+                    chunk.wetness[ly][lx] = wet
 
-                # Use position-based deterministic pseudo-noise
-                h = ((wx * 13 + wy * 71) * (seed & 0xFFFF)) & 0x7FFF
-                noise_val = (h / 8192.0) - 1.0  # approx -1..1
-
-                val = (noise_val + height_val * 0.3) / 1.3
-
-                if val < -0.15:
-                    # Water
+            # water fills empty cells in 70-89
+            for ly in range(70, CHUNK_HEIGHT):
+                if chunk.grid[ly][lx] == EMPTY:
                     chunk.spawn(lx, ly, 2)
-                elif val < 0.0:
-                    # Wet sand (beach)
-                    chunk.spawn(lx, ly, 1)
-                    chunk.wetness[ly][lx] = 2.0
-                elif val < 0.4:
-                    # Sand (dry)
-                    chunk.spawn(lx, ly, 1)
-                else:
-                    # Higher ground — sand
-                    chunk.spawn(lx, ly, 1)
 
-    def generate_around(self, center_wx: int, center_wy: int, radius: int = 8):
-        """Ensure terrain is generated for all chunks within *radius*."""
-        keys = self.get_chunks_in_radius(center_wx, center_wy, radius)
-        for cx, cy in keys:
-            chunk = self.get_chunk(cx, cy, create=False)
+    def generate_around(self, center_wx: int, radius: int = 5):
+        for cx in self.get_chunks_in_radius(center_wx, radius):
+            chunk = self.get_chunk(cx, create=False)
             if chunk is None or chunk.filled_count == 0:
-                self.generate_terrain(cx, cy)
+                self.generate_terrain(cx)
