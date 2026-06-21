@@ -19,6 +19,7 @@ from pygaminal.input_manager import InputManager
 from pygaminal.app import App
 
 from scripts.Grid import Grid, WIDTH, HEIGHT, EMPTY
+from scripts.Player import Player
 
 
 # ── colour palette ──────────────────────────────────────────
@@ -39,6 +40,7 @@ class Simulation:
     def __init__(self):
         self.grid = Grid()
         self.sim_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        self.water_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self._load_particle_types()
 
         # Brush state
@@ -83,7 +85,9 @@ class Simulation:
         self._write_graffiti()
 
         self._show_debug = False
-        self.sim_surf.fill((0, 0, 0, 0))  # transparent
+        self.sim_surf.fill((0, 0, 0, 0))
+        self.water_surf.fill((0, 0, 0, 0))
+        self.player = Player(self.grid)
 
     # ── graffiti writer ────────────────────────────────────
 
@@ -236,7 +240,7 @@ class Simulation:
             self.current_type = 3
         elif pygame.K_4 in im.just_pressed_keys:
             self.current_type = 4
-        elif pygame.K_d in im.just_pressed_keys:
+        elif pygame.K_F3 in im.just_pressed_keys:
             self._show_debug = not self._show_debug
         elif pygame.K_ESCAPE in im.just_pressed_keys:
             self._reset_to_menu()
@@ -334,6 +338,11 @@ class Simulation:
         self.grid.dirty = [(x, y) for y in range(self.grid.height) for x in range(self.grid.width)]
         self.grid.frame = 0
         self._write_graffiti()
+        self.player.x = 140.0
+        self.player.y = 75.0
+        self.player.vx = 0.0
+        self.player.vy = 0.0
+        self.player.on_ground = False
         self._menu_active = True
         self._transition_dir = 0
         self._transition_alpha = 0
@@ -359,6 +368,8 @@ class Simulation:
             self._menu_drip()
 
         self.grid.step()
+        if not self._menu_active or self._transition_dir:
+            self.player.update(obj)
         self._render()
 
     def _render(self) -> None:
@@ -369,16 +380,17 @@ class Simulation:
             tid = self.grid.grid[y][x]
             if tid == EMPTY:
                 self.sim_surf.set_at((x, y), (0, 0, 0, 0))
+                self.water_surf.set_at((x, y), (0, 0, 0, 0))
             elif tid == 1:
                 raw = self.grid.wetness[y][x]
                 w = 0 if raw <= 0.0 else min(int(raw + 0.99), 3)
                 self.sim_surf.set_at((x, y), SAND_COLORS[w])
-            else:
+                self.water_surf.set_at((x, y), (0, 0, 0, 0))
+            elif tid == 2:
                 info = self.grid.particle_types.get(tid)
                 color = info["color"] if info else (255, 255, 255)
-                if tid == 2:
-                    color = color[:3] + (160,)
-                self.sim_surf.set_at((x, y), color)
+                color = color[:3] + (160,)
+                self.water_surf.set_at((x, y), color)
         self.grid.dirty.clear()
 
     def _menu_drip(self) -> None:
@@ -410,12 +422,14 @@ class Simulation:
                                     self.grid.wetness[y][x] = wet
 
     def draw(self, obj) -> None:
-        """Blit sim surface → Screen surface (both 160×90). SCALED handles display."""
+        """Blit sim surface → player → water → UI."""
         Screen().surface.blit(self.sim_surf, (0, 0))
 
         if self._menu_active:
             self._draw_menu()
         else:
+            self.player.draw(obj)
+            Screen().surface.blit(self.water_surf, (0, 0))
             self._draw_toolbar()
             self._draw_cursor()
 
