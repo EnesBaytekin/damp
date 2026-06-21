@@ -64,17 +64,20 @@ class Player:
             return True
         return self.grid.grid[y][x] == 1
 
-    def _rect_free(self, rx, ry, w=8, h=8):
-        """True if the 8×8 rect at (rx, ry) does NOT touch any solid cell."""
-        x1, y1 = int(rx), int(ry)
-        x2, y2 = int(rx + w - 1), int(ry + h - 1)
+    def _hitbox_free(self, rx, ry):
+        """True if the player hitbox (4×6, offset +2,+2 from sprite) is clear."""
+        x1, y1 = int(rx + 2), int(ry + 2)
+        x2, y2 = int(rx + 5), int(ry + 7)
 
-        if x1 < 0 or x2 >= WIDTH or y2 >= HEIGHT:
+        if x2 >= WIDTH or y2 >= HEIGHT:
+            return False
+        if x1 < 0:
             return False
         if y1 < 0:
-            y1 = 0  # allow jumping above the grid
+            # allow partial top clipping — player can jump above grid
+            pass
 
-        for gy in range(y1, y2 + 1):
+        for gy in range(max(0, y1), y2 + 1):
             for gx in range(x1, x2 + 1):
                 if self._solid(gx, gy):
                     return False
@@ -107,7 +110,7 @@ class Player:
 
         # ── horizontal ─────────────────────────────────────
         new_x = self.x + dx * MOVE_SPEED
-        if self._rect_free(new_x, self.y):
+        if self._hitbox_free(new_x, self.y):
             self.x = new_x
 
         # ── gravity ────────────────────────────────────────
@@ -117,18 +120,52 @@ class Player:
 
         # ── vertical ───────────────────────────────────────
         self.y += self.vy
-        if not self._rect_free(self.x, self.y):
-            if self.vy > 0:             # landing
+        if not self._hitbox_free(self.x, self.y):
+            if self.vy > 0:
                 self.y = int(self.y)
-                while not self._rect_free(self.x, self.y):
+                for _ in range(8):
+                    if self._hitbox_free(self.x, self.y):
+                        break
                     self.y -= 1
                 self.vy = 0
-                self.on_ground = True
-            else:                         # hit head
+                if self._hitbox_free(self.x, self.y):
+                    self.on_ground = True
+            else:
                 self.y = int(self.y)
-                while not self._rect_free(self.x, self.y):
+                for _ in range(8):
+                    if self._hitbox_free(self.x, self.y):
+                        break
                     self.y += 1
                 self.vy = 0
+
+        # ── push-out: sides first, then up, then outward ──
+        if not self._hitbox_free(self.x, self.y):
+            found = False
+            for r in range(1, 5):
+                for dx in (r, -r):
+                    if self._hitbox_free(self.x + dx, self.y):
+                        self.x += dx; found = True; break
+                if found: break
+                if self._hitbox_free(self.x, self.y - r):
+                    self.y -= r; found = True; break
+                for dx in (r, -r):
+                    if self._hitbox_free(self.x + dx, self.y - r):
+                        self.x += dx; self.y -= r; found = True; break
+                if found: break
+                for dy in range(1, r):
+                    for dx in (r, -r):
+                        if self._hitbox_free(self.x + dx, self.y - dy):
+                            self.x += dx; self.y -= dy; found = True; break
+                    if found: break
+                if found: break
+                for dx in range(-r + 1, r):
+                    if dx == 0: continue
+                    if self._hitbox_free(self.x + dx, self.y - r):
+                        self.x += dx; self.y -= r; found = True; break
+                if found: break
+            if found:
+                self.vy = 0
+                self.on_ground = not self._hitbox_free(self.x, self.y + 1)
 
         # ── coyote time ────────────────────────────────────
         if self.on_ground:
@@ -137,7 +174,7 @@ class Player:
             self.coyote -= 1
 
         # ── ground check ───────────────────────────────────
-        self.on_ground = not self._rect_free(self.x, self.y + 1)
+        self.on_ground = not self._hitbox_free(self.x, self.y + 1)
 
         # ── animation ──────────────────────────────────────
         moving = dx != 0
