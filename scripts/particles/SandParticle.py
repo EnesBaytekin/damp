@@ -1,64 +1,59 @@
 """
-Sand particle — falls down, slides on diagonals, supports sleep/wake mechanics.
+Sand particle — clean state machine:
 
-Behaviour is driven by the particle's *wetness* level (float → int floor):
+  Awake → down if empty → diagonal if RNG passes → sleep if support enough
+  Dry sand (level 0) never sleeps — always tries diagonals.
+  Wet sand has lower diagonal chance and higher sleep threshold.
 
-  Level | Fall  | Diagonal | Sleep threshold | Max sleep | Re-sleep delay
-  ------|-------|----------|-----------------|-----------|---------------
-  0 dry | always | 100%    | never sleeps    | —         | —
-  1     | always |  60%    | ≥4 neighbours   | 30 s      | 1.5 s
-  2     | always |  20%    | ≥2 neighbours   | 150 s     | 3 s
-  3     | always |   0%    | ≥1 neighbour    | infinite  | 6 s
+   Level | Diagonal | Sleep threshold | Max sleep frames
+   ------|----------|-----------------|-----------------
+   0 dry | 100%     | never sleeps    | —
+   1     | 60%      | ≥4 neighbours   | 1800 (30s)
+   2     | 20%      | ≥2 neighbours   | 9000 (150s)
+   3     | 5%       | ≥1 neighbour    | ∞
 """
 
 from scripts.Chunk import Chunk as Grid
 
-# ── wetness-level tables ──────────────────────────────────────
-# Indexed by int wetness level (0-3)
-DIAGONAL_CHANCE   = [0.3, 0.3, 0.2, 0.0]
-SUPPORT_THRESHOLD = [  4,   3,   2,   1]
-MAX_SLEEP_FRAMES  = [0, 1800, 9000, 2_000_000_000]  # 30s / 150s / ∞
-RESLEEP_DELAY     = [0,   90,  180,  360]             # 1.5s / 3s / 6s
+DIAGONAL_CHANCE   = [1.0, 0.6, 0.2, 0.05]
+SUPPORT_THRESHOLD = [999,   4,   2,    1]
+MAX_SLEEP_FRAMES  = [0, 1800, 9000, 2_000_000_000]
 
 
 def update(grid: Grid, x: int, y: int) -> None:
-    """One simulation step for a sand particle at (x, y)."""
-    wet = grid.wetness[y][x]          # float
-    level = min(int(wet), 3)          # 0-3 for table lookups
+    wet = grid.wetness[y][x]
+    level = min(int(wet), 3)
     h = grid.height
 
-    # ── SLEEP CHECK (lazy support_count) ──────────────────────
+    # ── ASLEEP ─────────────────────────────────────────────
     if grid.asleep[y][x]:
+        # Wake conditions (cheapest first)
         if grid.disturbed[y][x] == grid.frame:
             pass  # wake
         elif level < 3 and (grid.frame - grid.wake_frame[y][x]) > MAX_SLEEP_FRAMES[level]:
             pass  # timer expired
-        else:
-            # Expensive check — only when cheap ones fail
-            if grid.support_count(x, y) >= SUPPORT_THRESHOLD[level]:
-                return  # keep sleeping
-            # else: lost support → wake
-
+        elif grid.support_count(x, y) >= SUPPORT_THRESHOLD[level]:
+            return  # stay sleeping
+        # Wake up
         grid.asleep[y][x] = 0
         grid.wake_frame[y][x] = grid.frame
-        # fall through to movement
 
-    # ── MOVEMENT ────────────────────────────────────────────
+    # ── AWAKE — MOVEMENT ──────────────────────────────────
 
-    # 1 — fall straight down (always try, regardless of wetness)
+    # 1. Fall straight down
     if y + 1 < h and grid.can_occupy(x, y + 1, 1):
         grid.swap(x, y, x, y + 1)
         return
 
-    # 2 — diagonal slides (chance decreases with wetness level)
+    # 2. Diagonal slides (gated by wetness)
     if grid.rng.random() < DIAGONAL_CHANCE[level]:
+        prefer_left = grid.rng.random() < 0.5
         left = x - 1
         right = x + 1
         can_left  = x > 0 and y + 1 < h and grid.can_occupy(left, y + 1, 1)
         can_right = right < grid.width and y + 1 < h and grid.can_occupy(right, y + 1, 1)
 
         if can_left or can_right:
-            prefer_left = grid.rng.random() < 0.5
             if prefer_left:
                 if can_left:
                     grid.swap(x, y, left, y + 1)
@@ -71,9 +66,6 @@ def update(grid: Grid, x: int, y: int) -> None:
                     grid.swap(x, y, left, y + 1)
             return
 
-    # ── COULDN'T MOVE → try to sleep ──────────────────────
-    support = grid.support_count(x, y)
-    if support >= SUPPORT_THRESHOLD[level]:
-        frames_awake = grid.frame - grid.wake_frame[y][x]
-        if frames_awake >= RESLEEP_DELAY[level]:
-            grid.asleep[y][x] = 1
+    # 3. Couldn't move → try to sleep
+    if level > 0 and grid.support_count(x, y) >= SUPPORT_THRESHOLD[level]:
+        grid.asleep[y][x] = 1

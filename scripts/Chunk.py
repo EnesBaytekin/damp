@@ -8,7 +8,7 @@ always 0 since the world only extends horizontally.
 
 import random
 
-CHUNK_SIZE = 32   # width
+CHUNK_SIZE = 80   # width
 CHUNK_HEIGHT = 90 # full height
 EMPTY = 0
 

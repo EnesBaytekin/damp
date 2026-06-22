@@ -4,6 +4,7 @@ Uses ChunkManager for collision instead of a fixed Grid.
 """
 
 import pygame
+from scripts.Chunk import CHUNK_HEIGHT
 from pygaminal.screen import Screen
 from pygaminal.input_manager import InputManager
 
@@ -49,7 +50,7 @@ class Player:
     # ── physics ────────────────────────────────────────────
 
     def _solid(self, wx: int, wy: int) -> bool:
-        if wy >= 90:
+        if wy >= CHUNK_HEIGHT:
             return True
         if wy < 0:
             return False
@@ -171,6 +172,8 @@ class Player:
     def draw(self, camera=None):
         if camera:
             sx, sy = camera.world_to_screen(self.x, self.y)
+            sp = pygame.transform.scale(self.current_sprite(), (16, 16))
         else:
             sx, sy = int(self.x), int(self.y)
-        Screen().surface.blit(self.current_sprite(), (sx, sy))
+            sp = self.current_sprite()
+        Screen().surface.blit(sp, (sx, sy))

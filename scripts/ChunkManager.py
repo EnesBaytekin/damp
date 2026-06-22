@@ -178,14 +178,31 @@ class ChunkManager:
     def get_chunks_in_radius(self, center_wx: int, radius_chunks: int) -> list[int]:
         c_cx = center_wx // CHUNK_SIZE
         return [c_cx + dx for dx in range(-radius_chunks, radius_chunks + 1)]
+        
+        
 
-    def step_active(self, center_wx: int, radius: int = 3):
+    def step_active(self, center_wx: int, radius: int = 0):
         self.frame += 1
+        stepped = set()
         for cx in self.get_chunks_in_radius(center_wx, radius):
             chunk = self.get_chunk(cx, create=False)
             if chunk is not None and chunk.filled_count > 0:
                 chunk.step()
+                stepped.add(cx)
+        # Step any chunk receiving cross-chunk particles
+        for wx1, wy1, wx2, wy2 in self._cross_moves:
+            dst_cx = wx2 // CHUNK_SIZE
+            if dst_cx not in stepped:
+                chunk = self.get_chunk(dst_cx, create=False)
+                if chunk is not None and chunk.filled_count > 0:
+                    chunk.frame = self.frame
+                    chunk.step()
+                    stepped.add(dst_cx)
         self._apply_cross_moves()
+
+    def evict_far(self, center_wx, max_chunks):
+        """Disabled — chunks stay in memory for revisit."""
+        pass
 
     # ── terrain generation ─────────────────────────────────
 
