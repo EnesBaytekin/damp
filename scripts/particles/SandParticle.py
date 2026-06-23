@@ -56,8 +56,8 @@ def update(grid: Grid, x: int, y: int) -> None:
         prefer_left = grid.rng.random() < 0.5
         left = x - 1
         right = x + 1
-        can_left  = x > 0 and y + 1 < h and grid.can_occupy(left, y + 1, 1)
-        can_right = right < grid.width and y + 1 < h and grid.can_occupy(right, y + 1, 1)
+        can_left  = y + 1 < h and grid.can_occupy(left, y + 1, 1)
+        can_right = y + 1 < h and grid.can_occupy(right, y + 1, 1)
 
         if can_left or can_right:
             if prefer_left:

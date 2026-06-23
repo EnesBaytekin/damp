@@ -172,6 +172,7 @@ class Player:
     def draw(self, camera=None):
         if camera:
             sx, sy = camera.world_to_screen(self.x, self.y)
+            sx, sy = round(sx), round(sy)
             sp = pygame.transform.scale(self.current_sprite(), (16, 16))
         else:
             sx, sy = int(self.x), int(self.y)
