@@ -59,7 +59,7 @@ class Player:
     def _hitbox_free(self, rx: float, ry: float) -> bool:
         """True if the 4×6 hitbox (offset +2,+2) at (rx, ry) is clear."""
         x1, y1 = int(rx + 2), int(ry + 2)
-        x2, y2 = x1 + 3, y1 + 5
+        x2, y2 = x1 + 3, min(y1 + 5, CHUNK_HEIGHT - 1)
         for gy in range(y1, y2 + 1):
             for gx in range(x1, x2 + 1):
                 if self._solid(gx, gy):
@@ -100,28 +100,25 @@ class Player:
         if self.vy > MAX_FALL:
             self.vy = MAX_FALL
 
-        self.y += self.vy
-        if not self._hitbox_free(self.x, self.y):
-            if self.vy > 0:  # landing
-                self.y = int(self.y)
-                for _ in range(8):
-                    if self._hitbox_free(self.x, self.y):
-                        break
-                    self.y -= 1
+        # Prevent descending into sand
+        if self.vy > 0:
+            new_y = self.y + self.vy
+            if not self._hitbox_free(self.x, new_y):
                 self.vy = 0
                 self.on_ground = True
-            else:  # hit head
-                self.y = int(self.y)
-                for _ in range(8):
-                    if self._hitbox_free(self.x, self.y):
-                        break
-                    self.y += 1
+            else:
+                self.y = new_y
+        else:
+            new_y = self.y + self.vy
+            if not self._hitbox_free(self.x, new_y):
                 self.vy = 0
+            else:
+                self.y = new_y
 
-        # ── push-out ──────────────────────────────────────
+        # ── push-out (max 2px, no teleport) ────────────────
         if not self._hitbox_free(self.x, self.y):
             found = False
-            for r in range(1, 5):
+            for r in range(1, 3):
                 for d in (r, -r):
                     if self._hitbox_free(self.x + d, self.y):
                         self.x += d; found = True; break
@@ -131,18 +128,6 @@ class Player:
                 for d in (r, -r):
                     if self._hitbox_free(self.x + d, self.y - r):
                         self.x += d; self.y -= r; found = True; break
-                if found: break
-                for d in (r, -r):
-                    if self._hitbox_free(self.x + d, self.y + r):
-                        self.x += d; self.y += r; found = True; break
-                if found: break
-                for dy in range(1, r):
-                    for d in (r, -r):
-                        if self._hitbox_free(self.x + d, self.y - dy):
-                            self.x += d; self.y -= dy; found = True; break
-                        if self._hitbox_free(self.x + d, self.y + dy):
-                            self.x += d; self.y += dy; found = True; break
-                    if found: break
                 if found: break
             if found:
                 self.vy = 0

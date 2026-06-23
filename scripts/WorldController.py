@@ -82,18 +82,17 @@ class WorldController:
             })
 
     def _find_spawn(self) -> tuple[float, float]:
+        """Find spawn at sand surface — shortest sand column, on the surface."""
         for test_cx in (0, -1, 1):
             self.cm.generate_terrain(test_cx)
             chunk = self.cm.chunks.get(test_cx)
             if not chunk: continue
-            best_col, best_y = 0, 0
             for lx in range(CHUNK_SIZE):
-                for ly in range(CHUNK_HEIGHT - 1, -1, -1):
+                for ly in range(10, CHUNK_HEIGHT):
                     if chunk.grid[ly][lx] == 1:
-                        if ly > best_y: best_y, best_col = ly, lx
-                        break
-            if best_y > 10:
-                return float(test_cx * CHUNK_SIZE + best_col), float(best_y - 5)
+                        # ly is the surface row (first sand from top)
+                        wx = test_cx * CHUNK_SIZE + lx
+                        return float(wx), float(ly - 8)
         return 80.0, 40.0
 
     def _get_world_pos(self):
