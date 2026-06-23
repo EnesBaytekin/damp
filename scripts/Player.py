@@ -59,6 +59,9 @@ class Player:
     def _hitbox_free(self, rx: float, ry: float) -> bool:
         """True if the 4×6 hitbox (offset +2,+2) at (rx, ry) is clear."""
         x1, y1 = int(rx + 2), int(ry + 2)
+        # Hitbox bottom row = ry + 7. Must be < 90 to stay in world.
+        if ry + 7 >= CHUNK_HEIGHT:
+            return False
         x2, y2 = x1 + 3, min(y1 + 5, CHUNK_HEIGHT - 1)
         for gy in range(y1, y2 + 1):
             for gx in range(x1, x2 + 1):

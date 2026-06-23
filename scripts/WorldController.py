@@ -253,10 +253,19 @@ class WorldController:
                     vy = ly - vp_y0
                     if 0 <= vx < 80 and 0 <= vy < 45:
                         if tid == 1:
-                            w = min(int(chunk.wetness[ly][lx] + 0.99), 3)
-                            self.view_surf.set_at((vx, vy), SAND_COLORS[w])
+
+                                w = min(int(chunk.wetness[ly][lx] + 0.99), 3)
+                                self.view_surf.set_at((vx, vy), SAND_COLORS[w])
                         elif tid == 2:
                             self.water_surf.set_at((vx, vy), WATER_COLOR)
+
+        # ── bedrock (row 90+) — purely cosmetic grey bar ──
+        vp_bottom = int(self.camera.y) + 45
+        if vp_bottom > CHUNK_HEIGHT:
+            bed_start = max(0, CHUNK_HEIGHT - int(self.camera.y))
+            for vy in range(bed_start, 45):
+                for vx in range(80):
+                    self.view_surf.set_at((vx, vy), (40, 40, 45))
 
     def draw(self, obj):
         screen = Screen()

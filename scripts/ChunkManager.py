@@ -1,8 +1,6 @@
 """
-ChunkManager — owns all horizontal chunks (32×90), handles cross-chunk
-movement and terrain generation.
-
-World is infinite horizontally.  Each chunk is a 32-wide × 90-tall column.
+ChunkManager — owns all horizontal chunks (80×90), handles cross-chunk
+movement and terrain generation with caves, overhangs, and worm tunnels.
 """
 
 import random
@@ -10,13 +8,8 @@ import math
 from scripts.Chunk import Chunk, CHUNK_SIZE, CHUNK_HEIGHT, EMPTY
 
 
-def _smooth_noise(wx: int, seed: int) -> float:
-    """Very smooth 1D pseudo-noise by cosine-interpolating sparse samples.
-
-    Returns 0.0-1.0.  Samples every ~6 pixels so neighbouring columns
-    interpolate smoothly without abrupt cliffs.
-    """
-    spacing = 80.0
+def _smooth_noise(wx: int, seed: int, spacing: float = 80.0) -> float:
+    """Very smooth 1D pseudo-noise by cosine-interpolating sparse samples."""
     p = wx / spacing
     i0 = int(math.floor(p))
     i1 = i0 + 1
@@ -29,15 +22,16 @@ def _smooth_noise(wx: int, seed: int) -> float:
     v0 = _sample(i0)
     v1 = _sample(i1)
     t = p - i0
-    # Cosine interpolation for smooth curves
     ct = (1.0 - math.cos(t * math.pi)) * 0.5
     return v0 + (v1 - v0) * ct
 
 
 def _height_at(wx: int, seed: int) -> int:
-    """Terrain height (0-80) at world x — smooth hilly terrain."""
+    """Terrain height (0-80) at world x."""
     raw = _smooth_noise(wx, seed)
     return int(raw * 80)
+
+
 
 
 # ── ChunkManager ───────────────────────────────────────────
@@ -178,8 +172,6 @@ class ChunkManager:
     def get_chunks_in_radius(self, center_wx: int, radius_chunks: int) -> list[int]:
         c_cx = center_wx // CHUNK_SIZE
         return [c_cx + dx for dx in range(-radius_chunks, radius_chunks + 1)]
-        
-        
 
     def step_active(self, center_wx: int, radius: int = 0):
         self.frame += 1
@@ -189,7 +181,6 @@ class ChunkManager:
             if chunk is not None and chunk.filled_count > 0:
                 chunk.step()
                 stepped.add(cx)
-        # Step any chunk receiving cross-chunk particles
         for wx1, wy1, wx2, wy2 in self._cross_moves:
             dst_cx = wx2 // CHUNK_SIZE
             if dst_cx not in stepped:
@@ -207,14 +198,7 @@ class ChunkManager:
     # ── terrain generation ─────────────────────────────────
 
     def generate_terrain(self, cx: int):
-        """Fill chunk at cx with terrain.
-
-        Layers (top→bottom):
-          0-9:            air
-          10 → 90-height: air
-          90-height → 89: sand
-          70-89:          water (only where not already sand)
-        """
+        """Fill chunk at cx with full solid terrain, then carve worm tunnels."""
         chunk = self.get_chunk(cx)
         if chunk is None or chunk.filled_count > 0:
             return
@@ -224,9 +208,10 @@ class ChunkManager:
         for lx in range(CHUNK_SIZE):
             wx = cx * CHUNK_SIZE + lx
             h_val = heights[lx]
-            sand_top = 90 - h_val
 
-            # sand layer (90-height → 89)
+            sand_top = 90 - h_val
+            sand_top = max(5, min(87, sand_top))
+
             for ly in range(sand_top, CHUNK_HEIGHT):
                 h2 = hash((wx, ly, self.seed, 0xCAFE))
                 h2 = (h2 * 0x9E3779B9) & 0xFFFFFFFF
@@ -235,10 +220,60 @@ class ChunkManager:
                 if wet > 0:
                     chunk.wetness[ly][lx] = wet
 
-            # water fills empty cells in 70-89
             for ly in range(70, CHUNK_HEIGHT):
                 if chunk.grid[ly][lx] == EMPTY:
                     chunk.spawn(lx, ly, 2)
+
+        # ── worm tunnels (brush circle radius) ──
+        rng = random.Random(cx * CHUNK_SIZE + self.seed + 42)
+        n_tunnels = rng.randint(0, 3)
+        for _ in range(n_tunnels):
+            wx = cx * CHUNK_SIZE + rng.randint(8, CHUNK_SIZE - 8)
+            wy = rng.randint(20, 65)
+            if chunk.grid[wy][wx % CHUNK_SIZE] != 1:
+                continue
+            tunnel_len = rng.randint(30, 50)
+            smooth_radius = rng.uniform(7, 9)
+            radius_target = smooth_radius
+            for step_i in range(tunnel_len):
+                cx_local = wx % CHUNK_SIZE
+                # Pick new target every few steps for organic variation
+                if step_i % 4 == 0:
+                    radius_target = rng.uniform(6, 12)
+                smooth_radius += (radius_target - smooth_radius) * 0.12
+                radius = max(4, min(13, int(smooth_radius + 0.5)))
+                # Carve a circle of `radius` at this point
+                for dy in range(-radius, radius + 1):
+                    for dx in range(-radius, radius + 1):
+                        if dx * dx + dy * dy <= radius * radius:
+                            lx = cx_local + dx
+                            ly = wy + dy
+                            if 0 <= lx < CHUNK_SIZE and 0 <= ly < CHUNK_HEIGHT:
+                                if chunk.grid[ly][lx] == 1:
+                                    chunk.grid[ly][lx] = EMPTY
+                                    chunk.wetness[ly][lx] = 0.0
+                                    chunk.asleep[ly][lx] = 0
+                                    chunk.wake_frame[ly][lx] = 0
+                                    chunk.water_charge[ly][lx] = 0
+                                    chunk.filled_count -= 1
+                                    # Wet sand around carved cell for stability
+                                    for ndx in (-1, 0, 1):
+                                        for ndy in (-1, 0, 1):
+                                            nlx, nly = lx + ndx, ly + ndy
+                                            if 0 <= nlx < CHUNK_SIZE and 0 <= nly < CHUNK_HEIGHT:
+                                                if chunk.grid[nly][nlx] == 1:
+                                                    chunk.wetness[nly][nlx] = max(chunk.wetness[nly][nlx], 2.0)
+                                                    chunk.asleep[nly][nlx] = 1
+                                                    chunk.wake_frame[nly][nlx] = 0
+                # Move rightward with vertical drift
+                wx += rng.randint(1, 2)
+                wy += rng.choice([-1, 0, 0, 0, 1])
+                wy = max(15, min(75, wy))
+                # Stop before leaving the chunk
+                if wx >= (cx + 1) * CHUNK_SIZE - 4:
+                    break
+
+
 
     def generate_around(self, center_wx: int, radius: int = 5):
         for cx in self.get_chunks_in_radius(center_wx, radius):
