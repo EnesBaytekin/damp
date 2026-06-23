@@ -27,9 +27,12 @@ def _smooth_noise(wx: int, seed: int, spacing: float = 80.0) -> float:
 
 
 def _height_at(wx: int, seed: int) -> int:
-    """Terrain height (0-80) at world x."""
-    raw = _smooth_noise(wx, seed)
-    return int(raw * 80)
+    """Terrain height (0-80) at world x — large hills + micro-roughness."""
+    macro = _smooth_noise(wx, seed, 80.0)
+    micro = _smooth_noise(wx, seed + 7777, 6.0)
+    roughness = (micro - 0.5) * 6
+    raw = macro * 80 + roughness
+    return int(max(0, min(80, raw)))
 
 
 
