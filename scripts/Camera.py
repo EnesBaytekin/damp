@@ -21,6 +21,9 @@ class Camera:
         desired_y = target_y - self.h / 2
         self.x += (desired_x - self.x) * smooth
         self.y += (desired_y - self.y) * smooth
+        # Snap to integer grid for pixel-perfect alignment
+        self.x = round(self.x)
+        self.y = round(self.y)
 
     def snap(self, target_x: float, target_y: float):
         self.x = target_x - self.w / 2
