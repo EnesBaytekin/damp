@@ -1,7 +1,6 @@
 """
-Water particle — falls, spreads, flows across chunk boundaries transparently.
-
-Uses can_occupy() / swap() for cross-chunk movement.  No local bounds checks.
+Water particle — flow FIRST, wet adjacent sand AFTER.
+Edge-flow: below empty → check diagonals for cliff walls before falling straight.
 """
 
 from scripts.Chunk import Chunk as Grid, CHUNK_SIZE
@@ -12,7 +11,6 @@ def _in_chunk(grid: Grid, x: int, y: int) -> bool:
 
 
 def _get_type(grid: Grid, x: int, y: int) -> int:
-    """Get cell type.  Cross-chunk safe."""
     if _in_chunk(grid, x, y):
         return grid.grid[y][x]
     m = getattr(grid, 'manager', None)
@@ -22,7 +20,6 @@ def _get_type(grid: Grid, x: int, y: int) -> int:
 
 
 def _is_sand(grid: Grid, x: int, y: int) -> bool:
-    """True if cell contains sand.  Cross-chunk safe."""
     if _in_chunk(grid, x, y):
         return grid.grid[y][x] == 1
     m = getattr(grid, 'manager', None)
@@ -32,7 +29,6 @@ def _is_sand(grid: Grid, x: int, y: int) -> bool:
 
 
 def _sand_not_full(grid: Grid, x: int, y: int) -> bool:
-    """True if sand cell with wetness < 3.0.  Cross-chunk safe."""
     if _in_chunk(grid, x, y):
         return grid.grid[y][x] == 1 and grid.wetness[y][x] < 3.0
     m = getattr(grid, 'manager', None)
@@ -43,7 +39,6 @@ def _sand_not_full(grid: Grid, x: int, y: int) -> bool:
 
 
 def _wet_cell(grid: Grid, x: int, y: int) -> None:
-    """Add 0.5 wetness to sand at (x, y).  Cross-chunk safe."""
     if _in_chunk(grid, x, y):
         grid.wetness[y][x] += 0.5
         grid.dirty.append((x, y))
@@ -58,35 +53,33 @@ def _wet_cell(grid: Grid, x: int, y: int) -> None:
                 tg.dirty.append((lx, y))
 
 
-# ── charge dump helpers ──────────────────────────────────
-
-def _try_wet(grid: Grid, x: int, y: int) -> bool:
-    """Dump 1 charge into adjacent sand.  Returns True if exhausted."""
-    for dy in (-1, 0, 1):
-        for dx in (-1, 0, 1):
-            if dx == 0 and dy == 0:
-                continue
-            nx, ny = x + dx, y + dy
-            if _sand_not_full(grid, nx, ny):
-                grid.water_charge[y][x] -= 1
-                _wet_cell(grid, nx, ny)
-                if grid.water_charge[y][x] == 0:
-                    grid.grid[y][x] = 0
-                    grid.water_charge[y][x] = 0
-                    grid.dirty.append((x, y))
-                    return True
-                break
-    return False
-
-
 def _flow(grid: Grid, x: int, y: int) -> bool:
-    """Try to move water.  Returns True if moved."""
-    if y + 1 < grid.height:
-        below = _get_type(grid, x, y + 1)
-        if below == 0 or grid.can_occupy(x, y + 1, 2):
-            grid.swap(x, y, x, y + 1)
-            return True
+    """Try to move water. Edge-flow first, then fall, then sideways, then diag."""
+    if y + 1 >= grid.height:
+        return False
 
+    below = _get_type(grid, x, y + 1)
+
+    # ── 1 — Edge-flow: below empty, check diagonals for walls ──
+    if below == 0:
+        prefer_left = grid.rng.random() < 0.5
+        for dx in ([-1, 1] if prefer_left else [1, -1]):
+            nx, ny = x + dx, y + 1
+            if _get_type(grid, nx, ny) != 0:
+                continue
+            wall = _is_sand(grid, nx + dx, ny) or _is_sand(grid, nx, y) or _is_sand(grid, nx + dx, y)
+            if wall:
+                grid.swap(x, y, nx, ny)
+                return True
+        grid.swap(x, y, x, y + 1)
+        return True
+
+    # ── 2 — Displace lighter particle ──
+    if grid.can_occupy(x, y + 1, 2):
+        grid.swap(x, y, x, y + 1)
+        return True
+
+    # ── 3 — Sideways ──
     prefer_left = (grid.rng.random() < 0.5)
     for dx in ([-1, 1] if prefer_left else [1, -1]):
         nx = x + dx
@@ -94,20 +87,20 @@ def _flow(grid: Grid, x: int, y: int) -> bool:
             grid.swap(x, y, nx, y)
             return True
 
+    # ── 4 — Diagonal down ──
     for dx in ([-1, 1] if prefer_left else [1, -1]):
         nx, ny = x + dx, y + 1
-        if ny < grid.height and _get_type(grid, nx, ny) == 0:
-            grid.swap(x, y, nx, ny)
-            return True
-        if ny < grid.height and grid.can_occupy(nx, ny, 2):
-            grid.swap(x, y, nx, ny)
-            return True
+        if ny < grid.height:
+            t = _get_type(grid, nx, ny)
+            if t == 0 or grid.can_occupy(nx, ny, 2):
+                grid.swap(x, y, nx, ny)
+                return True
 
     return False
 
 
 def _dump_charge(grid: Grid, x: int, y: int) -> None:
-    """Dump all charge into adjacent sand."""
+    """Dump all charge into adjacent sand (only when stuck)."""
     charge = grid.water_charge[y][x]
     if charge <= 0:
         return
@@ -133,8 +126,8 @@ def _dump_charge(grid: Grid, x: int, y: int) -> None:
 
 
 def update(grid: Grid, x: int, y: int) -> None:
-    if grid.water_charge[y][x] > 0 and _try_wet(grid, x, y):
-        return
+    # FLOW FIRST, wet later
     if _flow(grid, x, y):
         return
-    _dump_charge(grid, x, y)
+    if grid.water_charge[y][x] > 0:
+        _dump_charge(grid, x, y)
