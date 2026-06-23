@@ -210,7 +210,16 @@ class WorldController:
             self.cm.generate_around(px, 2); self._generated_around = True
         else:
             self.cm.generate_around(px, 2)
-        self.cm.step_active(px, 0)
+        # Step both visible chunks
+        self.cm.frame += 1
+        stepped = set()
+        for cx in self.camera.get_visible_chunks():
+            ch = self.cm.get_chunk(cx, create=False)
+            if ch and ch.filled_count > 0:
+                ch.frame = self.cm.frame
+                ch.step()
+                stepped.add(cx)
+        self.cm._apply_cross_moves()
         self.player.update()
         self.camera.follow(self.player.x, self.player.y, 0.12)
         self._render()
