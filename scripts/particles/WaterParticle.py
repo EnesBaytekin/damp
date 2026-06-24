@@ -65,17 +65,18 @@ def _flow(grid: Grid, x: int, y: int) -> bool:
         prefer_left = grid.rng.random() < 0.5
         for dx in ([-1, 1] if prefer_left else [1, -1]):
             nx, ny = x + dx, y + 1
-            if _get_type(grid, nx, ny) != 0:
+            if _get_type(grid, nx, ny) != 0 or not _in_chunk(grid, nx, ny):
                 continue
             wall = _is_sand(grid, nx + dx, ny) or _is_sand(grid, nx, y) or _is_sand(grid, nx + dx, y)
             if wall:
                 grid.swap(x, y, nx, ny)
                 return True
-        grid.swap(x, y, x, y + 1)
+        if _in_chunk(grid, x, y + 1):
+            grid.swap(x, y, x, y + 1)
         return True
 
     # ── 2 — Displace lighter particle ──
-    if grid.can_occupy(x, y + 1, 2):
+    if _in_chunk(grid, x, y + 1) and grid.can_occupy(x, y + 1, 2):
         grid.swap(x, y, x, y + 1)
         return True
 
@@ -83,14 +84,14 @@ def _flow(grid: Grid, x: int, y: int) -> bool:
     prefer_left = (grid.rng.random() < 0.5)
     for dx in ([-1, 1] if prefer_left else [1, -1]):
         nx = x + dx
-        if _get_type(grid, nx, y) == 0:
+        if _in_chunk(grid, nx, y) and _get_type(grid, nx, y) == 0:
             grid.swap(x, y, nx, y)
             return True
 
     # ── 4 — Diagonal down ──
     for dx in ([-1, 1] if prefer_left else [1, -1]):
         nx, ny = x + dx, y + 1
-        if ny < grid.height:
+        if ny < grid.height and _in_chunk(grid, nx, ny):
             t = _get_type(grid, nx, ny)
             if t == 0 or grid.can_occupy(nx, ny, 2):
                 grid.swap(x, y, nx, ny)
