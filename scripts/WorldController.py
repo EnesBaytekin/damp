@@ -18,7 +18,7 @@ from scripts.Player import Player
 
 SAND_COLORS = [(194, 178, 128), (170, 150, 100), (140, 120, 80), (100, 80, 50)]
 WATER_COLOR = (64, 164, 223, 160)
-INTERACT_RADIUS = 45
+INTERACT_RADIUS = 20
 
 
 class WorldController:
@@ -50,6 +50,7 @@ class WorldController:
             s = pygame.Surface((3, 3)); s.fill(color); self._tool_icons[tid] = s
 
         self._cursor_surf = pygame.Surface((160, 90), pygame.SRCALPHA)
+        self._radius_surf = pygame.Surface((160, 90), pygame.SRCALPHA)
         self._show_debug = False
         self.quit_to_menu = False
 
@@ -102,7 +103,8 @@ class WorldController:
         return int(wx), int(wy)
 
     def _dist_to_player(self, wx: int, wy: int) -> float:
-        return ((wx - self.player.x) ** 2 + (wy - self.player.y) ** 2) ** 0.5
+        cx, cy = self.player.x + 4, self.player.y + 5
+        return ((wx - cx) ** 2 + (wy - cy) ** 2) ** 0.5
 
     def _paint(self, wx: int, wy: int, r: int):
         if self._dist_to_player(wx, wy) > INTERACT_RADIUS: return
@@ -273,11 +275,22 @@ class WorldController:
         scaled_water = pygame.transform.scale(self.water_surf, (160, 90))
         screen.surface.blit(scaled_view, (0, 0))
         self.player.draw(self.camera)
+        self._draw_radius()
         screen.surface.blit(scaled_water, (0, 0))
         self._draw_toolbar()
         self._draw_cursor()
         if self._show_debug:
             self._draw_debug()
+
+    def _draw_radius(self):
+        px, py = int(self.player.x) + 4, int(self.player.y) + 5
+        sx = int((px - self.camera.x) * 2)
+        sy = int((py - self.camera.y) * 2)
+        self._radius_surf.fill((0, 0, 0, 0))
+        if 0 <= sx < 160 and 0 <= sy < 90:
+            pygame.draw.circle(self._radius_surf, (255, 255, 255), (sx, sy), INTERACT_RADIUS * 2, 1)
+        self._radius_surf.set_alpha(180)
+        Screen().surface.blit(self._radius_surf, (0, 0))
 
     def _draw_toolbar(self):
         screen = Screen()

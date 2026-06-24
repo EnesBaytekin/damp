@@ -71,8 +71,7 @@ def _flow(grid: Grid, x: int, y: int) -> bool:
             if wall:
                 grid.swap(x, y, nx, ny)
                 return True
-        if _in_chunk(grid, x, y + 1):
-            grid.swap(x, y, x, y + 1)
+        grid.swap(x, y, x, y + 1)
         return True
 
     # ── 2 — Displace lighter particle ──
@@ -84,14 +83,14 @@ def _flow(grid: Grid, x: int, y: int) -> bool:
     prefer_left = (grid.rng.random() < 0.5)
     for dx in ([-1, 1] if prefer_left else [1, -1]):
         nx = x + dx
-        if _in_chunk(grid, nx, y) and _get_type(grid, nx, y) == 0:
+        if _get_type(grid, nx, y) == 0:
             grid.swap(x, y, nx, y)
             return True
 
     # ── 4 — Diagonal down ──
     for dx in ([-1, 1] if prefer_left else [1, -1]):
         nx, ny = x + dx, y + 1
-        if ny < grid.height and _in_chunk(grid, nx, ny):
+        if ny < grid.height:
             t = _get_type(grid, nx, ny)
             if t == 0 or grid.can_occupy(nx, ny, 2):
                 grid.swap(x, y, nx, ny)
@@ -100,10 +99,22 @@ def _flow(grid: Grid, x: int, y: int) -> bool:
     return False
 
 
+def _try_wet(grid: Grid, x: int, y: int) -> None:
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0: continue
+            nx, ny = x + dx, y + dy
+            if grid.water_charge[y][x] > 0 and _sand_not_full(grid, nx, ny):
+                grid.water_charge[y][x] -= 1
+                _wet_cell(grid, nx, ny)
+
 def _dump_charge(grid: Grid, x: int, y: int) -> None:
-    """Dump all charge into adjacent sand (only when stuck)."""
+    """Dump all charge into adjacent sand, or clean up dead water."""
     charge = grid.water_charge[y][x]
     if charge <= 0:
+        grid.grid[y][x] = 0
+        grid.water_charge[y][x] = 0
+        grid.dirty.append((x, y))
         return
     dumped = True
     while charge > 0 and dumped:
@@ -127,8 +138,16 @@ def _dump_charge(grid: Grid, x: int, y: int) -> None:
 
 
 def update(grid: Grid, x: int, y: int) -> None:
-    # FLOW FIRST, wet later
-    if _flow(grid, x, y):
+    charge = grid.water_charge[y][x]
+    if charge <= 0:
+        # No charge left — disappear
+        grid.grid[y][x] = 0
+        grid.water_charge[y][x] = 0
+        grid.dirty.append((x, y))
         return
-    if grid.water_charge[y][x] > 0:
-        _dump_charge(grid, x, y)
+    _try_wet(grid, x, y)
+    if _flow(grid, x, y):
+        if grid.water_charge[y][x] > 0:
+            _try_wet(grid, x, y)
+        return
+    _dump_charge(grid, x, y)
