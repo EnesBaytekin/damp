@@ -15,6 +15,7 @@ from pygaminal.app import App
 from scripts.Chunk import CHUNK_SIZE, CHUNK_HEIGHT, EMPTY
 from scripts.ChunkManager import ChunkManager
 from scripts.Camera import Camera
+from scripts.Template import Template
 from scripts.Player import Player
 
 SAND_COLORS = [(194, 178, 128), (170, 150, 100), (140, 120, 80), (100, 80, 50)]
@@ -409,10 +410,7 @@ class WorldController:
             wx, wy = self.quest_wx, self.quest_wy
             w, h = self.quest_template.get_rect()
             self._quest_surf.fill((0, 0, 0, 0))
-            font = pygame.font.SysFont("monospace", 8)
-            label = font.render(self.quest_score_text, True, (255, 240, 200))
-            self._quest_surf.blit(label, (0, 0), special_flags=0)
-            
+
             # Draw dimmed template outline at world pos
             for ty in range(h):
                 for tx in range(w):
@@ -424,11 +422,19 @@ class WorldController:
                                 px, py = sx + bx, sy + by
                                 if 0 <= px < 160 and 0 <= py < 90:
                                     self._quest_surf.set_at((px, py), (180, 220, 255, 100))
-            # Score label at world pos below template
+
+            # Score label at world pos below template using bitmap font
+            text_rows = self.quest_template.render_text(self.quest_score_text)
             score_x = int((wx - self.camera.x) * 2)
             score_y = int((wy + h + 1 - self.camera.y) * 2)
-            score_surf = pygame.font.SysFont("monospace", 8).render(self.quest_score_text, True, (255, 240, 200))
-            self._quest_surf.blit(score_surf, (score_x, score_y))
+            mfw, mfh = Template.FONT_W, Template.FONT_H
+            for row in range(mfh):
+                for col in range(len(text_rows[row])):
+                    if text_rows[row][col] == '1':
+                        px, py = score_x + col, score_y + row
+                        if 0 <= px < 160 and 0 <= py < 90:
+                            self._quest_surf.set_at((px, py), (255, 240, 200))
+
             Screen().surface.blit(self._quest_surf, (0, 0))
             return
 
@@ -461,7 +467,7 @@ class WorldController:
                                 self._quest_surf.set_at((px, py), (180, 220, 255, 100))
 
         # Corner markers (gold, 2px outside)
-        margin = 2
+        margin = 1
         for cwx, cwy in [
             (wx - margin, wy - margin),
             (wx + w - 1 + margin, wy - margin),
