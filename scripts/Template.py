@@ -47,6 +47,11 @@ class Template:
                 for y in range(shift):
                     self.grid[y][x] = 0
 
+        # Trim fully empty bottom rows
+        while self.height > 3 and all(self.grid[self.height - 1][x] == 0 for x in range(self.width)):
+            self.grid.pop()
+            self.height -= 1
+
         return self
 
     def _gen_blobs(self, rng):

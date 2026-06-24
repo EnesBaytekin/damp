@@ -382,7 +382,7 @@ class WorldController:
                 self.quest_wx, self.quest_wy
             )
             self.quest_score = p
-            self.quest_score_text = f'Score: {c}/{t} = {p}%'
+            self.quest_score_text = f'{p}%'
             self.quest_score_timer = 180
             self.quest_scored = True
             self.quest_placed = False
@@ -393,11 +393,12 @@ class WorldController:
             self.quest_template = None
 
     def _place_quest(self, wx, wy):
-        self.quest_wx = wx
-        self.quest_wy = wy
+        w, h = self.quest_template.get_rect()
+        self.quest_wx = wx - w // 2
+        self.quest_wy = wy - h // 2
         self.quest_placed = True
         self.quest_placing = False
-        print(f'Quest template placed at ({wx}, {wy})')
+        print(f'Quest placed at ({self.quest_wx},{self.quest_wy})')
 
     def _draw_quest(self):
         if not self.quest_template and not self.quest_scored:
@@ -412,7 +413,7 @@ class WorldController:
             label = font.render(self.quest_score_text, True, (255, 240, 200))
             self._quest_surf.blit(label, (0, 0), special_flags=0)
             
-            # Also draw dimmed template outline at world pos
+            # Draw dimmed template outline at world pos
             for ty in range(h):
                 for tx in range(w):
                     if self.quest_template.grid[ty][tx] == 1:
@@ -422,11 +423,13 @@ class WorldController:
                             for bx in range(2):
                                 px, py = sx + bx, sy + by
                                 if 0 <= px < 160 and 0 <= py < 90:
-                                    self._quest_surf.set_at((px, py), (180, 220, 255))
-            self._quest_surf.set_alpha(80)
+                                    self._quest_surf.set_at((px, py), (180, 220, 255, 100))
+            # Score label at world pos below template
+            score_x = int((wx - self.camera.x) * 2)
+            score_y = int((wy + h + 1 - self.camera.y) * 2)
+            score_surf = pygame.font.SysFont("monospace", 8).render(self.quest_score_text, True, (255, 240, 200))
+            self._quest_surf.blit(score_surf, (score_x, score_y))
             Screen().surface.blit(self._quest_surf, (0, 0))
-            # Score label on screen too
-            Screen().surface.blit(label, (2, 11))
             return
 
         if not self.quest_template:
@@ -435,9 +438,9 @@ class WorldController:
         w, h = self.quest_template.get_rect()
 
         if self.quest_placing:
-            mx, my = InputManager().get_mouse_position()
-            wx = int(mx + self.camera.x)
-            wy = int(my + self.camera.y)
+            wx, wy = self._get_world_pos()
+            wx -= w // 2
+            wy -= h // 2
         elif self.quest_placed:
             wx, wy = self.quest_wx, self.quest_wy
         else:
@@ -455,7 +458,7 @@ class WorldController:
                         for bx in range(2):
                             px, py = sx + bx, sy + by
                             if 0 <= px < 160 and 0 <= py < 90:
-                                self._quest_surf.set_at((px, py), (180, 220, 255))
+                                self._quest_surf.set_at((px, py), (180, 220, 255, 100))
 
         # Corner markers (gold, 2px outside)
         margin = 2
@@ -471,9 +474,8 @@ class WorldController:
                 for bx in range(2):
                     px, py = sx + bx, sy + by
                     if 0 <= px < 160 and 0 <= py < 90:
-                        self._quest_surf.set_at((px, py), (255, 60, 60))
+                        self._quest_surf.set_at((px, py), (255, 60, 60, 180))
 
-        self._quest_surf.set_alpha(100)
         Screen().surface.blit(self._quest_surf, (0, 0))
 
     def _draw_debug(self):
