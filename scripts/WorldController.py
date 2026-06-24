@@ -5,6 +5,7 @@ WorldController — the game scene with 2x zoom, 80×45 viewport.
 import importlib
 import json
 import os
+import random
 import pygame
 
 from pygaminal.screen import Screen
@@ -51,6 +52,20 @@ class WorldController:
 
         self._cursor_surf = pygame.Surface((160, 90), pygame.SRCALPHA)
         self._radius_surf = pygame.Surface((160, 90), pygame.SRCALPHA)
+        self._quest_surf = pygame.Surface((160, 90), pygame.SRCALPHA)
+
+        # Quest state
+        self.quest_active = False
+        self.quest_placed = False
+        self.quest_template = None
+        self.quest_wx = 0
+        self.quest_wy = 0
+        self.quest_placing = False
+        self.quest_rng = random.Random()
+        self.quest_score = 0
+        self.quest_score_timer = 0
+        self.quest_score_text = ""
+        self.quest_scored = False
         self._show_debug = False
         self.quit_to_menu = False
 
@@ -171,6 +186,7 @@ class WorldController:
         elif pygame.K_2 in im.just_pressed_keys: self.current_type = 2
         elif pygame.K_3 in im.just_pressed_keys: self.current_type = 3
         elif pygame.K_4 in im.just_pressed_keys: self.current_type = 4
+        elif pygame.K_5 in im.just_pressed_keys: self._quest_toggle()
         elif pygame.K_F3 in im.just_pressed_keys: self._show_debug = not self._show_debug
         elif pygame.K_ESCAPE in im.just_pressed_keys: self.quit_to_menu = True; return
 
@@ -199,13 +215,21 @@ class WorldController:
                 self._line_start = self._line_end = None; self._line_button = 0
         else:
             self._line_start = self._line_end = None; self._line_button = 0
-            if im.is_mouse_pressed(1) and self._dist_to_player(wx, wy) <= INTERACT_RADIUS:
+            if self.quest_placing and im.is_mouse_just_pressed(1):
+                self._place_quest(wx, wy)
+            elif im.is_mouse_pressed(1) and self._dist_to_player(wx, wy) <= INTERACT_RADIUS:
                 (self._water_erase if self.current_type == 4 else self._paint)(wx, wy, r)
             if im.is_mouse_pressed(3) and self._dist_to_player(wx, wy) <= INTERACT_RADIUS:
                 self._erase(wx, wy, r)
 
     def update(self, obj):
         self._handle_input()
+        if self.quest_score_timer > 0:
+            self.quest_score_timer -= 1
+            if self.quest_score_timer == 0:
+                self.quest_template = None
+                self.quest_score_text = ""
+                self.quest_scored = False
         px = int(self.player.x)
         if not self._generated_around:
             self.cm.generate_around(px, 2); self._generated_around = True
@@ -276,6 +300,7 @@ class WorldController:
         screen.surface.blit(scaled_view, (0, 0))
         self.player.draw(self.camera)
         self._draw_radius()
+        self._draw_quest()
         screen.surface.blit(scaled_water, (0, 0))
         self._draw_toolbar()
         self._draw_cursor()
@@ -336,6 +361,120 @@ class WorldController:
                                         self._cursor_surf.set_at((cx, cy), color)
         self._cursor_surf.set_alpha(80)
         Screen().surface.blit(self._cursor_surf, (0, 0))
+
+    def _quest_toggle(self):
+        if self.quest_scored:
+            return  # score still showing
+        if self.quest_score_timer > 0:
+            return
+        if not self.quest_active:
+            import time
+            seed = int(time.time()) & 0xFFFF
+            from scripts.Template import Template
+            self.quest_template = Template(seed=seed).generate()
+            self.quest_active = True
+            self.quest_placing = True
+            self.quest_placed = False
+        elif self.quest_placed:
+            w, h = self.quest_template.get_rect()
+            c, t, p = self.quest_template.score(
+                lambda x, y: self.cm.get_cell(x, y),
+                self.quest_wx, self.quest_wy
+            )
+            self.quest_score = p
+            self.quest_score_text = f'Score: {c}/{t} = {p}%'
+            self.quest_score_timer = 180
+            self.quest_scored = True
+            self.quest_placed = False
+            self.quest_active = False
+        elif self.quest_placing:
+            self.quest_active = False
+            self.quest_placing = False
+            self.quest_template = None
+
+    def _place_quest(self, wx, wy):
+        self.quest_wx = wx
+        self.quest_wy = wy
+        self.quest_placed = True
+        self.quest_placing = False
+        print(f'Quest template placed at ({wx}, {wy})')
+
+    def _draw_quest(self):
+        if not self.quest_template and not self.quest_scored:
+            return
+        
+        # Score display mode (countdown)
+        if self.quest_score_timer > 0 and self.quest_template:
+            wx, wy = self.quest_wx, self.quest_wy
+            w, h = self.quest_template.get_rect()
+            self._quest_surf.fill((0, 0, 0, 0))
+            font = pygame.font.SysFont("monospace", 8)
+            label = font.render(self.quest_score_text, True, (255, 240, 200))
+            self._quest_surf.blit(label, (0, 0), special_flags=0)
+            
+            # Also draw dimmed template outline at world pos
+            for ty in range(h):
+                for tx in range(w):
+                    if self.quest_template.grid[ty][tx] == 1:
+                        sx = int((wx + tx - self.camera.x) * 2)
+                        sy = int((wy + ty - self.camera.y) * 2)
+                        for by in range(2):
+                            for bx in range(2):
+                                px, py = sx + bx, sy + by
+                                if 0 <= px < 160 and 0 <= py < 90:
+                                    self._quest_surf.set_at((px, py), (180, 220, 255))
+            self._quest_surf.set_alpha(80)
+            Screen().surface.blit(self._quest_surf, (0, 0))
+            # Score label on screen too
+            Screen().surface.blit(label, (2, 11))
+            return
+
+        if not self.quest_template:
+            return
+
+        w, h = self.quest_template.get_rect()
+
+        if self.quest_placing:
+            mx, my = InputManager().get_mouse_position()
+            wx = int(mx + self.camera.x)
+            wy = int(my + self.camera.y)
+        elif self.quest_placed:
+            wx, wy = self.quest_wx, self.quest_wy
+        else:
+            return
+
+        self._quest_surf.fill((0, 0, 0, 0))
+
+        # Draw template content (blue)
+        for ty in range(h):
+            for tx in range(w):
+                if self.quest_template.grid[ty][tx] == 1:
+                    sx = int((wx + tx - self.camera.x) * 2)
+                    sy = int((wy + ty - self.camera.y) * 2)
+                    for by in range(2):
+                        for bx in range(2):
+                            px, py = sx + bx, sy + by
+                            if 0 <= px < 160 and 0 <= py < 90:
+                                self._quest_surf.set_at((px, py), (180, 220, 255))
+
+        # Corner markers (gold, 2px outside)
+        margin = 2
+        for cwx, cwy in [
+            (wx - margin, wy - margin),
+            (wx + w - 1 + margin, wy - margin),
+            (wx - margin, wy + h - 1 + margin),
+            (wx + w - 1 + margin, wy + h - 1 + margin),
+        ]:
+            sx = int((cwx - self.camera.x) * 2)
+            sy = int((cwy - self.camera.y) * 2)
+            for by in range(2):
+                for bx in range(2):
+                    px, py = sx + bx, sy + by
+                    if 0 <= px < 160 and 0 <= py < 90:
+                        self._quest_surf.set_at((px, py), (255, 60, 60))
+
+        self._quest_surf.set_alpha(100)
+        Screen().surface.blit(self._quest_surf, (0, 0))
 
     def _draw_debug(self):
         font = pygame.font.SysFont("monospace", 10)
