@@ -48,7 +48,7 @@ class WorldController:
         self._line_button = 0
 
         self._tool_icons = {}
-        for tid, color in {1: (194, 178, 128), 2: (64, 164, 223), 3: (100, 80, 50), 4: (90, 90, 90)}.items():
+        for tid, color in {1: (194, 178, 128), 2: (64, 164, 223), 3: (100, 80, 50), 4: (90, 90, 90), 5: (180, 160, 100)}.items():
             s = pygame.Surface((3, 3)); s.fill(color); self._tool_icons[tid] = s
 
         self._cursor_surf = pygame.Surface((160, 90), pygame.SRCALPHA)
@@ -67,8 +67,15 @@ class WorldController:
         self.quest_score_timer = 0
         self.quest_score_text = ""
         self.quest_scored = False
+        # Quest panel state
         self._show_debug = False
         self.quit_to_menu = False
+        self.quest_panel_open = False
+        self.quest_panel_mode = "menu"  # "menu" | "score"
+        self.quest_panel_score = ""
+        self.quest_candidates = []
+        self.quest_candidate_idx = 0
+        self.quest_hover_btn = ""
 
         spawn_x, spawn_y = self._find_spawn()
         self.player.x = spawn_x
@@ -183,7 +190,23 @@ class WorldController:
 
     def _handle_input(self):
         im = InputManager()
-        if pygame.K_1 in im.just_pressed_keys: self.current_type = 1
+        if hasattr(self, "_quest_btn_rect") and im.is_mouse_just_pressed(1):
+            bx, by, bw, bh = self._quest_btn_rect
+            mx, my = im.get_mouse_position()
+            if bx <= mx <= bx+bw and by <= my <= by+bh:
+                if self.quest_placed and not self.quest_scored:
+                    self._quest_placed_done()
+                elif not self.quest_scored:
+                    self.quest_panel_open = not self.quest_panel_open
+                    if self.quest_panel_open and not self.quest_candidates:
+                        self._quest_new_candidates()
+        if self.quest_panel_open and im.is_mouse_just_pressed(1):
+            mx, my = im.get_mouse_position()
+            self._handle_panel_click(mx, my)
+            return
+        if self.quest_panel_open:
+            return
+        elif pygame.K_1 in im.just_pressed_keys: self.current_type = 1
         elif pygame.K_2 in im.just_pressed_keys: self.current_type = 2
         elif pygame.K_3 in im.just_pressed_keys: self.current_type = 3
         elif pygame.K_4 in im.just_pressed_keys: self.current_type = 4
@@ -216,7 +239,10 @@ class WorldController:
                 self._line_start = self._line_end = None; self._line_button = 0
         else:
             self._line_start = self._line_end = None; self._line_button = 0
-            if self.quest_placing and im.is_mouse_just_pressed(1):
+            if self.current_type == 5 and im.is_mouse_just_pressed(1) and self._dist_to_player(wx, wy) <= INTERACT_RADIUS:
+                self.quest_panel_open = True
+                self.quest_panel_mode = "menu"
+            elif self.quest_placing and im.is_mouse_just_pressed(1):
                 self._place_quest(wx, wy)
             elif im.is_mouse_pressed(1) and self._dist_to_player(wx, wy) <= INTERACT_RADIUS:
                 (self._water_erase if self.current_type == 4 else self._paint)(wx, wy, r)
@@ -304,7 +330,10 @@ class WorldController:
         self._draw_quest()
         screen.surface.blit(scaled_water, (0, 0))
         self._draw_toolbar()
+        self._draw_quest_btn()
         self._draw_cursor()
+        if self.quest_panel_open:
+            self._draw_panel()
         if self._show_debug:
             self._draw_debug()
 
@@ -320,7 +349,7 @@ class WorldController:
 
     def _draw_toolbar(self):
         screen = Screen()
-        for tid in (1, 2, 3, 4):
+        for tid in (1, 2, 3, 4, 5):
             tx = 2 + (tid - 1) * 3
             screen.surface.blit(self._tool_icons[tid], (tx, 2))
         sx = 2 + (self.current_type - 1) * 3
@@ -363,28 +392,142 @@ class WorldController:
         self._cursor_surf.set_alpha(80)
         Screen().surface.blit(self._cursor_surf, (0, 0))
 
-    def _quest_toggle(self):
-        if self.quest_scored:
-            return  # score still showing
-        if self.quest_score_timer > 0:
-            return
-        if not self.quest_active:
-            import time
-            seed = int(time.time()) & 0xFFFF
-            from scripts.Template import Template
-            self.quest_template = Template(seed=seed).generate()
-            self.quest_active = True
-            self.quest_placing = True
-            self.quest_placed = False
-        elif self.quest_placed:
+
+    def _quest_new_candidates(self):
+        import time
+        from scripts.Template import Template
+        self.quest_candidates = []
+        for i in range(6):
+            self.quest_candidates.append(Template(seed=int(time.time())+(i*1000)).generate())
+        self.quest_candidate_idx = 0
+
+    def _quest_placed_done(self):
+        if self.quest_placed and not self.quest_scored:
             w, h = self.quest_template.get_rect()
             c, t, p = self.quest_template.score(
                 lambda x, y: self.cm.get_cell(x, y),
                 self.quest_wx, self.quest_wy
             )
             self.quest_score = p
-            self.quest_score_text = f'{p}%'
-            self.quest_score_timer = 180
+            self.quest_panel_score = f'{p}%'
+            self.quest_panel_mode = "score"
+            self.quest_panel_open = True
+            self.quest_scored = True
+            self.quest_placed = False
+            self.quest_active = False
+
+    def _render_preview(self, t, surf, ox, oy, scale=1):
+        w, h = t.width, t.height
+        for ty in range(h):
+            for tx in range(w):
+                if t.grid[ty][tx] == 1:
+                    for by in range(scale):
+                        for bx in range(scale):
+                            px = ox + tx * scale + bx
+                            py = oy + ty * scale + by
+                            if 0 <= px < surf.get_width() and 0 <= py < surf.get_height():
+                                surf.set_at((px, py), (180, 220, 255, 200))
+
+    def _render_text(self, text, surf, x, y, color=(255, 240, 200)):
+        from scripts.Template import Template
+        rows = Template.render_text(text)
+        for row in range(Template.FONT_H):
+            for col in range(len(rows[row])):
+                if rows[row][col] == '1':
+                    px, py = x + col, y + row
+                    if 0 <= px < surf.get_width() and 0 <= py < surf.get_height():
+                        surf.set_at((px, py), color)
+
+    def _panel_btn(self, surf, x, y, w, h, text, hover=False):
+        import pygame
+        bg = (80, 72, 58) if not hover else (110, 100, 80)
+        bd = (120, 110, 90) if not hover else (160, 150, 130)
+        pygame.draw.rect(surf, bg, (x, y, w, h))
+        pygame.draw.rect(surf, bd, (x, y, w, h), 1)
+        tw = len(text) * 6
+        self._render_text(text, surf, x + (w - tw) // 2, y + (h - 7) // 2, (255, 240, 200))
+
+    def _draw_panel_mode_select(self, screen):
+        pw, ph = 130, 62
+        px0 = (160 - pw) // 2
+        py0 = (90 - ph) // 2
+        import pygame
+        bg = pygame.Surface((pw, ph))
+        bg.fill((22, 20, 35))
+        screen.surface.blit(bg, (px0, py0))
+        pygame.draw.rect(screen.surface, (100, 90, 80), (px0, py0, pw, ph), 1)
+        inner = pygame.Surface((pw-4, ph-4))
+        inner.fill((28, 25, 42))
+        screen.surface.blit(inner, (px0+2, py0+2))
+        from pygaminal.input_manager import InputManager
+        im = InputManager()
+        mx, my = im.get_mouse_position()
+        self.quest_hover_btn = ""
+        if self.quest_candidates:
+            t = self.quest_candidates[self.quest_candidate_idx]
+            pv = pygame.Surface((40, 30))
+            sc = max(1, min(3, 38 // max(1, t.width), 28 // max(1, t.height)))
+            self._render_preview(t, pv, 1, 1, sc)
+            screen.surface.blit(pv, (px0+6, py0+8))
+            self._render_text(t.name.upper(), screen.surface, px0+50, py0+8)
+            self._render_text(str(t.width)+'x'+str(t.height), screen.surface, px0+50, py0+16, (160, 180, 200))
+            nbw, nbh = 24, 10
+            nbx, nby = px0+50, py0+28
+            h_prev = nbx <= mx <= nbx+nbw and nby <= my <= nby+nbh
+            self._panel_btn(screen.surface, nbx, nby, nbw, nbh, '<--', h_prev)
+            if h_prev: self.quest_hover_btn = 'prev'
+            h_next = nbx+nbw+4 <= mx <= nbx+nbw*2+4 and nby <= my <= nby+nbh
+            self._panel_btn(screen.surface, nbx+nbw+4, nby, nbw, nbh, '-->', h_next)
+            if h_next: self.quest_hover_btn = 'next'
+            sbx, sby = px0+50, py0+42
+            sbw, sbh = 52, 10
+            h_sel = sbx <= mx <= sbx+sbw and sby <= my <= sby+sbh
+            self._panel_btn(screen.surface, sbx, sby, sbw, sbh, 'SELECT', h_sel)
+            if h_sel: self.quest_hover_btn = 'select'
+
+    def _draw_panel_mode_score(self, screen):
+        pw, ph = 130, 50
+        px0 = (160 - pw) // 2
+        py0 = (90 - ph) // 2
+        import pygame
+        bg = pygame.Surface((pw, ph))
+        bg.fill((22, 20, 35))
+        screen.surface.blit(bg, (px0, py0))
+        pygame.draw.rect(screen.surface, (100, 90, 80), (px0, py0, pw, ph), 1)
+        inner = pygame.Surface((pw-4, ph-4))
+        inner.fill((28, 25, 42))
+        screen.surface.blit(inner, (px0+2, py0+2))
+        self._render_text('BLUEPRINT COMPLETE', screen.surface, px0+8, py0+6, (200, 200, 200))
+        self._render_text(self.quest_panel_score, screen.surface, px0+12, py0+22, (255, 240, 200))
+        from pygaminal.input_manager import InputManager
+        im = InputManager()
+        mx, my = im.get_mouse_position()
+        self.quest_hover_btn = ''
+        bx, by, bw, bh = px0+30, py0+37, 60, 9
+        h_ok = bx <= mx <= bx+bw and by <= my <= by+bh
+        self._panel_btn(screen.surface, bx, by, bw, bh, 'OK', h_ok)
+        if h_ok: self.quest_hover_btn = 'ok'
+
+    def _quest_toggle(self):
+        if self.quest_scored:
+            return
+        if self.quest_score_timer > 0:
+            return
+        if not self.quest_active:
+            # Just open the menu panel
+            self.quest_panel_open = True
+            self.quest_panel_mode = "menu"
+        elif self.quest_placed:
+            # Score it and show panel
+            w, h = self.quest_template.get_rect()
+            c, t, p = self.quest_template.score(
+                lambda x, y: self.cm.get_cell(x, y),
+                self.quest_wx, self.quest_wy
+            )
+            self.quest_score = p
+            self.quest_panel_score = f"{p}%"
+            self.quest_panel_mode = "score"
+            self.quest_panel_open = True
             self.quest_scored = True
             self.quest_placed = False
             self.quest_active = False
@@ -426,7 +569,7 @@ class WorldController:
             # Score label at world pos below template using bitmap font
             text_rows = self.quest_template.render_text(self.quest_score_text)
             score_x = int((wx - self.camera.x) * 2)
-            score_y = int((wy + h + 1 - self.camera.y) * 2)
+            score_y = int((wy - 2 - self.camera.y) * 2)
             mfw, mfh = Template.FONT_W, Template.FONT_H
             for row in range(mfh):
                 for col in range(len(text_rows[row])):
@@ -484,6 +627,61 @@ class WorldController:
 
         Screen().surface.blit(self._quest_surf, (0, 0))
 
+    def _draw_quest_btn(self):
+        import pygame
+        screen = Screen()
+        im = InputManager()
+        mx, my = im.get_mouse_position()
+        bx, by = 155, 35
+        self._quest_btn_rect = (bx, by, 5, 15)
+        if self.quest_scored or self.quest_placing or self.quest_placed:
+            color = (80, 90, 60) if not (bx <= mx <= bx+5 and by <= my <= by+15) else (110, 130, 80)
+        else:
+            color = (60, 60, 70) if not (bx <= mx <= bx+5 and by <= my <= by+15) else (90, 90, 100)
+        pygame.draw.rect(screen.surface, color, (bx, by, 5, 15))
+
+
+    def _draw_panel(self):
+        screen = Screen()
+        if self.quest_panel_mode == "menu":
+            self._draw_panel_mode_select(screen)
+        elif self.quest_panel_mode == "score":
+            self._draw_panel_mode_score(screen)
+
+    def _handle_panel_click(self, mx, my):
+        if self.quest_panel_mode == "menu":
+            pw, ph = 130, 62
+            px0 = (160 - pw) // 2
+            py0 = (90 - ph) // 2
+            nbw, nbh = 24, 10
+            nbx, nby = px0+50, py0+28
+            sbx, sby = px0+50, py0+42
+            sbw, sbh = 52, 10
+            if nbx <= mx <= nbx+nbw and nby <= my <= nby+nbh and self.quest_candidates:
+                self.quest_candidate_idx = (self.quest_candidate_idx - 1) % len(self.quest_candidates)
+            if nbx+nbw+4 <= mx <= nbx+nbw*2+4 and nby <= my <= nby+nbh and self.quest_candidates:
+                self.quest_candidate_idx = (self.quest_candidate_idx + 1) % len(self.quest_candidates)
+            if sbx <= mx <= sbx+sbw and sby <= my <= sby+sbh and self.quest_candidates:
+                self.quest_template = self.quest_candidates[self.quest_candidate_idx]
+                self.quest_active = True
+                self.quest_placing = True
+                self.quest_placed = False
+                self.quest_panel_open = False
+                self.quest_scored = False
+        elif self.quest_panel_mode == "score":
+            pw, ph = 130, 50
+            px0 = (160 - pw) // 2
+            py0 = (90 - ph) // 2
+            bx, by, bw, bh = px0+30, py0+37, 60, 9
+            if bx <= mx <= bx+bw and by <= my <= by+bh:
+                self.quest_panel_open = False
+                self.quest_panel_mode = "menu"
+                self.quest_template = None
+                self.quest_panel_score = ""
+                self.quest_scored = False
+                self.quest_placed = False
+                self.quest_hover_btn = ""
+
     def _draw_debug(self):
         font = pygame.font.SysFont("monospace", 10)
         total = sum(c.filled_count for c in self.cm.chunks.values())
@@ -492,7 +690,7 @@ class WorldController:
             f"player ({int(self.player.x)},{int(self.player.y)})",
             f"cam ({int(self.camera.x)},{int(self.camera.y)})",
             f"chunks {len(self.cm.chunks)}",
-            f"brush: {['sand','water','wet','eraser'][self.current_type-1]} r={self.brush_radius}",
+            f"brush: {["sand","water","wet","eraser","quest"][self.current_type-1]} r={self.brush_radius}",
             f"fps: {App().clock.get_fps():.0f}" if App().clock else "fps: ?",
         ]
         for i, line in enumerate(lines):
