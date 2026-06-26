@@ -277,7 +277,7 @@ class WorldController:
         self._render()
 
     def _render(self):
-        self.view_surf.fill((0, 0, 0, 0))
+        self.view_surf.fill((140, 170, 200, 255))
         self.water_surf.fill((0, 0, 0, 0))
 
         cx0, cx1 = self.camera.get_visible_chunks()
