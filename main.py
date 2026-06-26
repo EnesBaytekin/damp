@@ -3,6 +3,8 @@ Damp — falling-sand / pixel-simulation sandbox game.
 Built on pygaminal (JSON scene + component framework on top of pygame).
 """
 
+import os
+import sys
 import pygame
 from pygaminal import Scene, App, Screen, InputManager, AudioManager
 from time import time
@@ -29,6 +31,10 @@ def load_scene(scene_name: str) -> Scene:
 
 
 def main():
+    # PyInstaller: switch to the temp bundle directory so relative paths work
+    if getattr(sys, 'frozen', False):
+        os.chdir(sys._MEIPASS)
+
     pygame.init()
 
     Screen().surface = pygame.display.set_mode(
